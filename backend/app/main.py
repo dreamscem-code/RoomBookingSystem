@@ -1,9 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_db_connection, get_database, init_db_indexes
+from app.routers import auth, room
 
 logger = logging.getLogger("uvicorn")
 
@@ -31,6 +33,19 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     lifespan=lifespan,
 )
+
+# CORS middleware for Web Frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount Routers
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(room.router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

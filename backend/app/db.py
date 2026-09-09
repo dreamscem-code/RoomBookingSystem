@@ -1,13 +1,11 @@
-import os
 from typing import Optional
-from dotenv import load_dotenv
 from pymongo import ASCENDING, DESCENDING, IndexModel, MongoClient
 from pymongo.database import Database
 
-load_dotenv()
+from app.config import settings
 
-MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGO_URL") or "mongodb://localhost:27017"
-DB_NAME = os.getenv("MONGO_DB_NAME", "RoomBookingDB")
+MONGO_URL = settings.MONGO_URL
+DB_NAME = settings.DB_NAME
 
 _client: Optional[MongoClient] = None
 
@@ -16,14 +14,14 @@ def get_client() -> MongoClient:
     """Return or initialize the PyMongo client singleton."""
     global _client
     if _client is None:
-        _client = MongoClient(MONGO_URI)
+        _client = MongoClient(MONGO_URL)
     return _client
 
 
-def get_database(name: Optional[str] = None) -> Database:
+def get_database() -> Database:
     """Return database handle."""
     client = get_client()
-    return client[name or DB_NAME]
+    return client[DB_NAME]
 
 
 def close_db_connection() -> None:
@@ -32,7 +30,6 @@ def close_db_connection() -> None:
     if _client is not None:
         _client.close()
         _client = None
-
 
 # --- Index Initialization for PyMongo ---
 

@@ -1,5 +1,9 @@
 import os
+from dotenv import load_dotenv
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -13,8 +17,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # MongoDB Settings
-    MONGO_URI: str = os.getenv("MONGO_URI") or os.getenv("MONGO_URL") or "mongodb://localhost:27017"
-    DB_NAME: str = os.getenv("DB_NAME", "RoomBookingDB")
+    MONGO_URL: str
+    DB_NAME: str = "RoomBookingDB"
 
     # Security & JWT
     JWT_SECRET_KEY: str = "super_secret_jwt_key_change_in_production_environment"
@@ -22,4 +26,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
 
-settings = Settings()
+settings = Settings() #helps to use the congif files for security keys when use settings.jwt_secret_keys and all other algorithms
+
+

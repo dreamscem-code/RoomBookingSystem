@@ -10,8 +10,24 @@ from .common import (
     Team,
     UserType,
 )
-from .user import Profile, User, UserRole
-from .room import Room, RoomIssueReport
+from .user import (
+    Profile,
+    Token,
+    TokenData,
+    User,
+    UserCreate,
+    UserInDB,
+    UserLogin,
+    UserRole,
+)
+from .room import (
+    Room,
+    RoomCreate,
+    RoomIssueReport,
+    RoomIssueReportCreate,
+    RoomIssueReportUpdate,
+    RoomUpdate,
+)
 from .booking import Attendee, Booking, CancellationRequest, TimeSlot
 from .log import ActionLog, NotificationLog
 
@@ -27,13 +43,22 @@ __all__ = [
     "MongoBaseModel",
     "Actor",
     "LogTarget",
-    # User
+    # User & Auth
     "Profile",
     "UserRole",
     "User",
+    "UserInDB",
+    "UserCreate",
+    "UserLogin",
+    "Token",
+    "TokenData",
     # Room
     "Room",
+    "RoomCreate",
+    "RoomUpdate",
     "RoomIssueReport",
+    "RoomIssueReportCreate",
+    "RoomIssueReportUpdate",
     # Booking
     "TimeSlot",
     "Attendee",
