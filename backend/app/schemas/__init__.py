@@ -28,7 +28,17 @@ from .room import (
     RoomIssueReportUpdate,
     RoomUpdate,
 )
-from .booking import Attendee, Booking, CancellationRequest, TimeSlot
+from .booking import (
+    Attendee,
+    AvailabilityResponse,
+    Booking,
+    BookingCreate,
+    BookingUpdate,
+    CancellationRequest,
+    CancellationRequestCreate,
+    CancellationReview,
+    TimeSlot,
+)
 from .log import ActionLog, NotificationLog
 
 __all__ = [
@@ -64,6 +74,11 @@ __all__ = [
     "Attendee",
     "CancellationRequest",
     "Booking",
+    "BookingCreate",
+    "BookingUpdate",
+    "CancellationRequestCreate",
+    "CancellationReview",
+    "AvailabilityResponse",
     # Logs
     "ActionLog",
     "NotificationLog",

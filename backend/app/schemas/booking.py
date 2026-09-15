@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .common import BookingStatus, MongoBaseModel, RequestStatus
 
@@ -36,3 +36,43 @@ class Booking(MongoBaseModel):
     attendees: List[Attendee] = []
     cancellation_request: Optional[CancellationRequest] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class BookingCreate(BaseModel):
+    room_id: str
+    title: str = Field(..., min_length=2, max_length=100, description="Meeting title or purpose")
+    time_slot: TimeSlot
+    attendees: List[Attendee] = Field(default_factory=list, description="List of attendees")
+
+    @model_validator(mode="after")
+    def validate_time_slot(self) -> "BookingCreate":
+        if self.time_slot.start >= self.time_slot.end:
+            raise ValueError("Start time must be strictly before end time")
+        return self
+
+
+class BookingUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=2, max_length=100)
+    time_slot: Optional[TimeSlot] = None
+    attendees: Optional[List[Attendee]] = None
+
+    @model_validator(mode="after")
+    def validate_time_slot(self) -> "BookingUpdate":
+        if self.time_slot and self.time_slot.start >= self.time_slot.end:
+            raise ValueError("Start time must be strictly before end time")
+        return self
+
+
+class CancellationRequestCreate(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=500, description="Reason for requesting cancellation")
+
+
+class CancellationReview(BaseModel):
+    action: RequestStatus = Field(..., description="Action to take: approved or rejected")
+    admin_notes: Optional[str] = Field(None, max_length=500, description="Optional notes from the administrator")
+
+
+class AvailabilityResponse(BaseModel):
+    room_id: str
+    is_available: bool
+    conflicting_bookings: List[Booking] = []

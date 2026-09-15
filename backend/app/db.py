@@ -31,6 +31,9 @@ def close_db_connection() -> None:
         _client.close()
         _client = None
 
+
+# ------------------      need to watch this code         ---------------------#
+
 # --- Index Initialization for PyMongo ---
 
 def init_db_indexes(db: Database) -> None:

@@ -84,9 +84,9 @@ def update_issue_report(
     return RoomIssueReport(**issue_doc)
 
 
-# ============================================================================
+#============================================================================
 # Rooms CRUD Endpoints
-# ============================================================================
+#============================================================================
 
 @router.post(
     "",
@@ -251,6 +251,8 @@ def delete_room(
     status_code=status.HTTP_201_CREATED,
     summary="Report an issue for a room (Any authenticated user)",
 )
+
+#annyone can report issues
 def report_room_issue(
     room_id: str,
     payload: RoomIssueReportCreate,

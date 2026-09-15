@@ -89,3 +89,12 @@ class TokenData(BaseModel):
     """Decoded JWT payload."""
     user_id: Optional[str] = None
     email: Optional[str] = None
+
+
+class ProfileUpdate(BaseModel):
+    """All fields are optional — only provided fields will be updated."""
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    team: Optional[Team] = None
