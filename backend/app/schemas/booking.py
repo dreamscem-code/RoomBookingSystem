@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .common import BookingStatus, MongoBaseModel, RequestStatus
 
@@ -8,6 +8,14 @@ from .common import BookingStatus, MongoBaseModel, RequestStatus
 class TimeSlot(BaseModel):
     start: datetime
     end: datetime
+
+    @field_validator("start", "end", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: datetime) -> datetime:
+        """Ensure naive datetimes from MongoDB are explicitly marked as UTC."""
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
 
 
 class Attendee(BaseModel):
@@ -30,6 +38,8 @@ class Booking(MongoBaseModel):
     room_id: str
     room_name: str
     created_by: str
+    creator_name: Optional[str] = None
+    creator_email: Optional[str] = None
     title: str
     time_slot: TimeSlot
     status: BookingStatus = BookingStatus.CONFIRMED

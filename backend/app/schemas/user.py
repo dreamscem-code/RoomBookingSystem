@@ -98,3 +98,9 @@ class ProfileUpdate(BaseModel):
     phone: Optional[str] = None
     avatar_url: Optional[str] = None
     team: Optional[Team] = None
+
+
+class PasswordChangeRequest(BaseModel):
+    """Payload for changing current user's password."""
+    current_password: str
+    new_password: str = Field(..., min_length=6, description="Minimum 6 characters")

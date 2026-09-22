@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_db_connection, get_database, init_db_indexes
-from app.routers import auth, booking, notification, room
+from app.routers import auth, booking, notification, room, user
 
 logger = logging.getLogger("uvicorn")
 
@@ -48,6 +48,7 @@ app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(room.router, prefix=settings.API_V1_STR)
 app.include_router(booking.router, prefix=settings.API_V1_STR)
 app.include_router(notification.router, prefix=settings.API_V1_STR)
+app.include_router(user.router, prefix=settings.API_V1_STR)
 
 
 @app.get("/")

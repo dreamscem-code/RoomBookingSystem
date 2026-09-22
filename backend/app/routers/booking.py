@@ -8,6 +8,7 @@ from pymongo.database import Database
 from app.services.notification import (
     send_booking_cancelled_notification,
     send_booking_created_notification,
+    send_cancellation_requested_notification,
 )
 
 from app.db import get_database
@@ -95,9 +96,62 @@ def _log_action(
         pass
 
 
+def _enrich_booking_docs(db: Database, docs: List[dict]) -> List[Booking]:
+    """Enrich booking documents with creator's full name and email for display."""
+    if not docs:
+        return []
+
+    user_ids = list({doc.get("created_by") for doc in docs if doc.get("created_by")})
+    users_map = {}
+    if user_ids:
+        for u in db["users"].find({"_id": {"$in": user_ids}}, {"_id": 1, "email": 1, "profile": 1}):
+            prof = u.get("profile") or {}
+            full_name = f"{prof.get('first_name', '')} {prof.get('last_name', '')}".strip()
+            users_map[u["_id"]] = {
+                "name": full_name or u.get("email"),
+                "email": u.get("email"),
+            }
+
+    result = []
+    for doc in docs:
+        if not doc.get("creator_name") and doc.get("created_by") in users_map:
+            doc["creator_name"] = users_map[doc["created_by"]]["name"]
+            doc["creator_email"] = users_map[doc["created_by"]]["email"]
+        result.append(Booking(**doc))
+    return result
+
+
 # ============================================================================
-# Availability & Pending Reviews (Declared before /{booking_id} path params)
+# Availability, Today's Schedule & Pending Reviews
 # ============================================================================
+
+@router.get(
+    "/today",
+    response_model=List[Booking],
+    summary="List all room bookings for today with creator details",
+)
+def get_today_bookings(
+    include_cancelled: bool = Query(False, description="Whether to include cancelled bookings"),
+    db: Database = Depends(get_database),
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieve all bookings scheduled for today with organizer details."""
+    now = datetime.now(timezone.utc)
+    start_of_today = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
+    end_of_today = datetime(now.year, now.month, now.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+
+    query = {
+        "$or": [
+            {"time_slot.start": {"$gte": start_of_today, "$lte": end_of_today}},
+            {"time_slot.end": {"$gte": start_of_today, "$lte": end_of_today}},
+            {"time_slot.start": {"$lte": start_of_today}, "time_slot.end": {"$gte": end_of_today}},
+        ]
+    }
+    if not include_cancelled:
+        query["status"] = {"$ne": BookingStatus.CANCELLED.value}
+
+    cursor = db["bookings"].find(query).sort("time_slot.start", ASCENDING)
+    return _enrich_booking_docs(db, list(cursor))
 
 @router.get(
     "/check-availability",
@@ -199,11 +253,18 @@ def create_booking(
 
     # 3. Insert new booking document
     booking_id = str(uuid.uuid4())
+    creator_name = (
+        f"{current_user.profile.first_name} {current_user.profile.last_name}".strip()
+        if current_user.profile
+        else current_user.email
+    )
     booking = Booking(
         _id=booking_id,
         room_id=payload.room_id,
         room_name=room_doc["name"],
         created_by=current_user.id,
+        creator_name=creator_name,
+        creator_email=current_user.email,
         title=payload.title.strip(),
         time_slot=payload.time_slot,
         status=BookingStatus.CONFIRMED,
@@ -267,7 +328,7 @@ def list_bookings(
         query["time_slot.start"] = time_filter
 
     cursor = db["bookings"].find(query).sort("time_slot.start", ASCENDING)
-    return [Booking(**doc) for doc in cursor]
+    return _enrich_booking_docs(db, list(cursor))
 
 
 @router.get(
@@ -287,7 +348,7 @@ def get_booking(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Booking not found",
         )
-    return Booking(**doc)
+    return _enrich_booking_docs(db, [doc])[0]
 
 
 @router.patch(
@@ -430,6 +491,7 @@ def cancel_booking_direct(
 def request_booking_cancellation(
     booking_id: str,
     payload: CancellationRequestCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Database = Depends(get_database),
 ):
@@ -486,6 +548,15 @@ def request_booking_cancellation(
         action="REQUEST_CANCELLATION",
         document_id=booking_id,
         metadata={"reason": payload.reason},
+    )
+
+    # Notify all active admins and supervisors via email to review this request
+    background_tasks.add_task(
+        send_cancellation_requested_notification,
+        db=db,
+        booking=Booking(**booking_doc),
+        requested_by=current_user,
+        reason=payload.reason.strip(),
     )
 
     return Booking(**booking_doc)

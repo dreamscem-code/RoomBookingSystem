@@ -35,7 +35,7 @@ def list_all_issues(
     status_filter: Optional[str] = Query(None, alias="status", pattern="^(open|in_progress|resolved|dismissed)$"),
     category: Optional[IssueCategory] = None,
     search: Optional[str] = Query(None, description="Search keyword in issue description"),
-    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.SUPERVISOR, RoleName.FULL_TIME_STAFF)),
+    current_user: User = Depends(get_current_user),
     db: Database = Depends(get_database),
 ):
     """Retrieve all issue reports with optional filtering by status, category, and search keyword."""
@@ -59,7 +59,7 @@ def list_all_issues(
 def update_issue_report(
     issue_id: str,
     payload: RoomIssueReportUpdate,
-    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.SUPERVISOR)),
+    current_user: User = Depends(get_current_user),
     db: Database = Depends(get_database),
 ):
     """Update issue status (e.g. in_progress, resolved) or assign a staff member."""
@@ -84,6 +84,26 @@ def update_issue_report(
     return RoomIssueReport(**issue_doc)
 
 
+@router.delete(
+    "/issues/{issue_id}",
+    summary="Delete a room issue report",
+)
+def delete_issue_report(
+    issue_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Database = Depends(get_database),
+):
+    """Delete an issue report (Admin/Supervisor only)."""
+    issues_col = db["room_issue_reports"]
+    res = issues_col.delete_one({"_id": issue_id})
+    if res.deleted_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Issue report not found",
+        )
+    return {"message": "Issue report deleted successfully", "issue_id": issue_id}
+
+
 #============================================================================
 # Rooms CRUD Endpoints
 #============================================================================
@@ -92,11 +112,11 @@ def update_issue_report(
     "",
     response_model=Room,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new room (Admin & Supervisor only)",
+    summary="Create a new room",
 )
 def create_room(
     payload: RoomCreate,
-    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.SUPERVISOR)),
+    current_user: User = Depends(require_roles(RoleName.ADMIN)),
     db: Database = Depends(get_database),
 ):
     """Create a new bookable room."""
@@ -133,7 +153,7 @@ def create_room(
 )
 def list_rooms(
     amenity: Optional[str] = Query(None, description="Filter by required amenity (e.g. Projector)"),
-    is_active: Optional[bool] = Query(True, description="Filter active rooms (pass empty to list all)"),
+    is_active: Optional[bool] = Query(None, description="Filter active rooms (leave empty to list all)"),
     current_user: User = Depends(get_current_user),
     db: Database = Depends(get_database),
 ):
@@ -148,6 +168,18 @@ def list_rooms(
     return [Room(**doc) for doc in cursor]
 
 
+def _find_room(rooms_col, room_id: str):
+    doc = rooms_col.find_one({"_id": room_id})
+    if not doc:
+        try:
+            from bson import ObjectId
+            if ObjectId.is_valid(room_id):
+                doc = rooms_col.find_one({"_id": ObjectId(room_id)})
+        except Exception:
+            pass
+    return doc
+
+
 @router.get(
     "/{room_id}",
     response_model=Room,
@@ -159,7 +191,7 @@ def get_room(
     db: Database = Depends(get_database),
 ):
     """Retrieve details of a single room."""
-    room_doc = db["rooms"].find_one({"_id": room_id})
+    room_doc = _find_room(db["rooms"], room_id)
     if not room_doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -171,17 +203,17 @@ def get_room(
 @router.patch(
     "/{room_id}",
     response_model=Room,
-    summary="Update room details (Admin & Supervisor only)",
+    summary="Update room details",
 )
 def update_room(
     room_id: str,
     payload: RoomUpdate,
-    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.SUPERVISOR)),
+    current_user: User = Depends(require_roles(RoleName.ADMIN)),
     db: Database = Depends(get_database),
 ):
     """Update room attributes (amenities, status)."""
     rooms_col = db["rooms"]
-    room_doc = rooms_col.find_one({"_id": room_id})
+    room_doc = _find_room(rooms_col, room_id)
     if not room_doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -189,11 +221,12 @@ def update_room(
         )
 
     update_fields = {}
+    actual_id = room_doc["_id"]
     if payload.name is not None:
         name_clean = payload.name.strip()
         # Check name collision with another room
         collision = rooms_col.find_one({
-            "_id": {"$ne": room_id},
+            "_id": {"$ne": actual_id},
             "name": {"$regex": f"^{re.escape(name_clean)}$", "$options": "i"},
         })
         if collision:
@@ -209,15 +242,15 @@ def update_room(
         update_fields["is_active"] = payload.is_active
 
     if update_fields:
-        rooms_col.update_one({"_id": room_id}, {"$set": update_fields})
-        room_doc = rooms_col.find_one({"_id": room_id})
+        rooms_col.update_one({"_id": actual_id}, {"$set": update_fields})
+        room_doc = rooms_col.find_one({"_id": actual_id})
 
     return Room(**room_doc)
 
 
 @router.delete(
     "/{room_id}",
-    summary="Deactivate (soft-delete) a room (Admin only)",
+    summary="Deactivate (soft-delete) a room",
 )
 def delete_room(
     room_id: str,
@@ -226,17 +259,18 @@ def delete_room(
 ):
     """Soft-delete a room by setting is_active to false to preserve historical booking data."""
     rooms_col = db["rooms"]
-    room_doc = rooms_col.find_one({"_id": room_id})
+    room_doc = _find_room(rooms_col, room_id)
     if not room_doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Room not found",
         )
 
-    rooms_col.update_one({"_id": room_id}, {"$set": {"is_active": False}})
+    actual_id = room_doc["_id"]
+    rooms_col.update_one({"_id": actual_id}, {"$set": {"is_active": False}})
     return {
         "message": f"Room '{room_doc['name']}' deactivated successfully",
-        "room_id": room_id,
+        "room_id": str(actual_id),
         "is_active": False,
     }
 

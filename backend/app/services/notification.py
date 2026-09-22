@@ -76,7 +76,7 @@ def _log_notification(
     title: str,
     message: str,
     channel: NotificationChannel = NotificationChannel.EMAIL,
-    status: str = "sent",
+    status: str = "unread",
 ) -> None:
     """Persist notification record to notification_logs collection."""
     try:
@@ -275,6 +275,96 @@ Room Booking Team
             recipient_id=user_id,
             title=subject,
             message=f"Booking '{booking.title}' was cancelled by {cancelled_by.email}. {reason or ''}",
+            channel=NotificationChannel.EMAIL,
+            status="sent" if success else "failed",
+        )
+
+
+def send_cancellation_requested_notification(
+    db: Database,
+    booking: Booking,
+    requested_by: User,
+    reason: str,
+) -> None:
+    """Notify all Admins and Supervisors when a staff member requests a booking cancellation."""
+    users_col = db["users"]
+
+    # Query all active admins and supervisors
+    admin_docs = list(
+        users_col.find(
+            {
+                "is_active": True,
+                "roles.role_name": {"$in": ["admin", "supervisor"]},
+            },
+            {"_id": 1, "email": 1, "profile": 1},
+        )
+    )
+
+    if not admin_docs:
+        logger.warning("No active admins or supervisors found to notify for cancellation request.")
+        return
+
+    requester_name = (
+        f"{requested_by.profile.first_name} {requested_by.profile.last_name}".strip()
+        if requested_by.profile
+        else requested_by.email
+    )
+
+    subject = f"Cancellation Request: '{booking.title}' in {booking.room_name}"
+    start_str = _format_datetime(booking.time_slot.start)
+    end_str = _format_datetime(booking.time_slot.end)
+
+    text_body = f"""Hello Administrator,
+
+A user has requested to cancel the following room booking and requires your review:
+
+  Meeting:       {booking.title}
+  Room:          {booking.room_name}
+  Start Time:    {start_str}
+  End Time:      {end_str}
+  Requested By:  {requester_name} ({requested_by.email})
+  Reason:        {reason}
+
+Please log into the Room Booking System to approve or reject this cancellation request.
+
+Best regards,
+Room Booking System
+"""
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #d97706; border-bottom: 2px solid #fde68a; padding-bottom: 8px;">⚠️ Cancellation Request Awaiting Review</h2>
+        <p>A user has requested to cancel a room booking. Review details below:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+            <tr><td style="padding: 8px; font-weight: bold; width: 140px;">Meeting:</td><td style="padding: 8px;">{booking.title}</td></tr>
+            <tr style="background-color: #fffbeb;"><td style="padding: 8px; font-weight: bold;">Room:</td><td style="padding: 8px;">{booking.room_name}</td></tr>
+            <tr><td style="padding: 8px; font-weight: bold;">Start Time:</td><td style="padding: 8px;">{start_str}</td></tr>
+            <tr style="background-color: #fffbeb;"><td style="padding: 8px; font-weight: bold;">End Time:</td><td style="padding: 8px;">{end_str}</td></tr>
+            <tr><td style="padding: 8px; font-weight: bold;">Requested By:</td><td style="padding: 8px;">{requester_name} ({requested_by.email})</td></tr>
+            <tr style="background-color: #fffbeb;"><td style="padding: 8px; font-weight: bold;">Reason:</td><td style="padding: 8px; color: #b45309; font-weight: bold;">{reason}</td></tr>
+        </table>
+        <p style="color: #718096; font-size: 13px; margin-top: 20px;">Please log in to the admin panel to review and approve or reject this request.</p>
+    </div>
+    """
+
+    for admin in admin_docs:
+        admin_email = admin.get("email")
+        admin_id = admin.get("_id")
+        if not admin_email:
+            continue
+
+        success = _send_email_smtp(
+            to_email=admin_email,
+            subject=subject,
+            text_content=text_body,
+            html_content=html_body,
+            reply_to=requested_by.email,
+        )
+        _log_notification(
+            db=db,
+            recipient_id=admin_id,
+            title=subject,
+            message=f"Cancellation request by {requested_by.email} for '{booking.title}' ({booking.room_name}). Reason: {reason}",
             channel=NotificationChannel.EMAIL,
             status="sent" if success else "failed",
         )

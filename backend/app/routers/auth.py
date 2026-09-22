@@ -4,8 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pymongo.database import Database
 
 from app.db import get_database
-from app.schemas.common import RoleName
-from app.schemas.user import Token, User, UserCreate, UserInDB, UserLogin, UserRole, ProfileUpdate
+from app.schemas.user import (
+    PasswordChangeRequest,
+    ProfileUpdate,
+    Token,
+    User,
+    UserCreate,
+    UserInDB,
+    UserLogin,
+    UserRole,
+)
 
 from app.security import (
     create_access_token,
@@ -190,3 +198,40 @@ def update_profile(
 
     updated_doc = users_col.find_one({"_id": current_user.id})
     return User(**updated_doc)
+
+
+@router.post("/change-password", summary="Change password for the authenticated user")
+def change_password(
+    payload: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Database = Depends(get_database),
+):
+    """Verify current password and update to new hashed password."""
+    users_col = db["users"]
+    user_doc = users_col.find_one({"_id": current_user.id})
+    if not user_doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # Verify current password
+    if not verify_password(payload.current_password, user_doc.get("hashed_password", "")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    # Hash and save new password
+    users_col.update_one(
+        {"_id": current_user.id},
+        {
+            "$set": {
+                "hashed_password": hash_password(payload.new_password),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+    return {"message": "Password changed successfully"}
+
