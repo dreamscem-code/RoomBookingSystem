@@ -151,17 +151,6 @@ export const RoleManagement = () => {
 
   // Counts
   const totalCount = users.length;
-  const adminCount = users.filter((u) =>
-    u.roles?.some((r) => r.role_name?.toLowerCase() === 'admin')
-  ).length;
-  const supervisorCount = users.filter((u) =>
-    u.roles?.some((r) => r.role_name?.toLowerCase() === 'supervisor')
-  ).length;
-  const staffCount = users.filter((u) =>
-    u.roles?.some((r) =>
-      ['full-time staff', 'part-time staff', 'intern'].includes(r.role_name?.toLowerCase())
-    )
-  ).length;
 
   // Filtered users
   const filteredUsers = useMemo(() => {
@@ -340,91 +329,7 @@ export const RoleManagement = () => {
         </div>
       )}
 
-      {/* 2. Metrics Counters */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <button
-          type="button"
-          onClick={() => {
-            setRoleFilter('all');
-            setDepartmentFilter('all');
-          }}
-          className={`p-4 rounded-2xl border text-left transition cursor-pointer ${
-            roleFilter === 'all' && departmentFilter === 'all'
-              ? 'bg-[#1977cc]/10 border-[#1977cc] shadow-sm'
-              : 'bg-white border-slate-200/90 hover:bg-slate-50'
-          }`}
-        >
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Total Users
-          </p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{totalCount}</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setRoleFilter('admin');
-            setDepartmentFilter('all');
-          }}
-          className={`p-4 rounded-2xl border text-left transition cursor-pointer ${
-            roleFilter === 'admin'
-              ? 'bg-amber-50 border-amber-500 shadow-sm'
-              : 'bg-white border-slate-200/90 hover:bg-slate-50'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-amber-800 uppercase tracking-wider">
-              Administrators
-            </p>
-            <ShieldAlert className="w-4 h-4 text-amber-600" />
-          </div>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{adminCount}</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setRoleFilter('supervisor');
-            setDepartmentFilter('all');
-          }}
-          className={`p-4 rounded-2xl border text-left transition cursor-pointer ${
-            roleFilter === 'supervisor'
-              ? 'bg-sky-50 border-sky-500 shadow-sm'
-              : 'bg-white border-slate-200/90 hover:bg-slate-50'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-sky-800 uppercase tracking-wider">
-              Supervisors
-            </p>
-            <ShieldCheck className="w-4 h-4 text-sky-600" />
-          </div>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{supervisorCount}</p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setRoleFilter('full-time staff');
-            setDepartmentFilter('all');
-          }}
-          className={`p-4 rounded-2xl border text-left transition cursor-pointer ${
-            roleFilter === 'full-time staff'
-              ? 'bg-emerald-50 border-emerald-500 shadow-sm'
-              : 'bg-white border-slate-200/90 hover:bg-slate-50'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">
-              Staff Members
-            </p>
-            <UserCheck className="w-4 h-4 text-emerald-600" />
-          </div>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{staffCount}</p>
-        </button>
-      </div>
-
-      {/* 3. Search & Filter Bar */}
+      {/* 2. Search & Filter Bar */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -439,30 +344,39 @@ export const RoleManagement = () => {
           />
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-semibold text-slate-400 uppercase mr-1">Department:</span>
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'admin', label: 'Admin' },
-            { id: 'management', label: 'Management' },
-            { id: 'youth', label: 'Youth' },
-            { id: 'family', label: 'Family' },
-          ].map((dept) => (
-            <button
-              key={dept.id}
-              onClick={() => {
-                setDepartmentFilter(dept.id);
-                setRoleFilter('all');
-              }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold capitalize transition cursor-pointer ${
-                departmentFilter === dept.id
-                  ? 'bg-[#1977cc] text-white shadow-sm'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Role Filter */}
+          <div className="flex items-center space-x-1.5">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Role:</span>
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="py-1.5 px-3 rounded-xl border border-slate-300 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:border-[#1977cc] focus:ring-2 focus:ring-[#1977cc]/20 cursor-pointer"
             >
-              {dept.label}
-            </button>
-          ))}
+              <option value="all">All Roles</option>
+              <option value="admin">Administrators</option>
+              <option value="supervisor">Supervisors</option>
+              <option value="full-time staff">Full-time Staff</option>
+              <option value="part-time staff">Part-time Staff</option>
+              <option value="intern">Intern</option>
+            </select>
+          </div>
+
+          {/* Department Filter */}
+          <div className="flex items-center space-x-1.5">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Department:</span>
+            <select
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              className="py-1.5 px-3 rounded-xl border border-slate-300 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:border-[#1977cc] focus:ring-2 focus:ring-[#1977cc]/20 cursor-pointer"
+            >
+              <option value="all">All Departments</option>
+              <option value="admin">Admin</option>
+              <option value="management">Management</option>
+              <option value="youth">Youth</option>
+              <option value="family">Family</option>
+            </select>
+          </div>
         </div>
       </div>
 
