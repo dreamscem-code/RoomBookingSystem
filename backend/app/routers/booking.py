@@ -98,14 +98,22 @@ def _log_action(
 
 
 def _enrich_booking_docs(db: Database, docs: List[dict]) -> List[Booking]:
-    """Enrich booking documents with creator's full name and email for display."""
+    """Enrich booking documents with creator and attendee full names and emails for display."""
     if not docs:
         return []
 
-    user_ids = list({doc.get("created_by") for doc in docs if doc.get("created_by")})
+    user_ids = set()
+    for doc in docs:
+        if doc.get("created_by"):
+            user_ids.add(doc.get("created_by"))
+        for att in doc.get("attendees") or []:
+            uid = att.get("user_id") if isinstance(att, dict) else getattr(att, "user_id", None)
+            if uid:
+                user_ids.add(uid)
+
     users_map = {}
     if user_ids:
-        for u in db["users"].find({"_id": {"$in": user_ids}}, {"_id": 1, "email": 1, "profile": 1}):
+        for u in db["users"].find({"_id": {"$in": list(user_ids)}}, {"_id": 1, "email": 1, "profile": 1}):
             prof = u.get("profile") or {}
             full_name = f"{prof.get('first_name', '')} {prof.get('last_name', '')}".strip()
             users_map[u["_id"]] = {
@@ -118,6 +126,18 @@ def _enrich_booking_docs(db: Database, docs: List[dict]) -> List[Booking]:
         if not doc.get("creator_name") and doc.get("created_by") in users_map:
             doc["creator_name"] = users_map[doc["created_by"]]["name"]
             doc["creator_email"] = users_map[doc["created_by"]]["email"]
+
+        if doc.get("attendees"):
+            enriched_attendees = []
+            for att in doc["attendees"]:
+                att_dict = att if isinstance(att, dict) else att.model_dump()
+                uid = att_dict.get("user_id")
+                if uid in users_map:
+                    att_dict["name"] = users_map[uid]["name"]
+                    att_dict["email"] = users_map[uid]["email"]
+                enriched_attendees.append(att_dict)
+            doc["attendees"] = enriched_attendees
+
         result.append(Booking(**doc))
     return result
 
@@ -312,7 +332,7 @@ def create_booking(
         notify_team=True,
     )
 
-    return booking
+    return _enrich_booking_docs(db, [booking.to_mongo()])[0]
 
 
 @router.get(
@@ -411,21 +431,41 @@ def update_booking(
     if payload.attendees is not None:
         update_fields["attendees"] = [att.model_dump() for att in payload.attendees]
 
-    if payload.time_slot is not None:
+    target_room_id = payload.room_id or booking_doc["room_id"]
+    if payload.room_id and payload.room_id != booking_doc["room_id"]:
+        new_room = db["rooms"].find_one({"_id": payload.room_id})
+        if not new_room:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target room not found",
+            )
+        if not new_room.get("is_active", True):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Target room is deactivated",
+            )
+        update_fields["room_id"] = new_room["_id"]
+        update_fields["room_name"] = new_room["name"]
+
+    target_start = payload.time_slot.start if payload.time_slot else booking_doc["time_slot"]["start"]
+    target_end = payload.time_slot.end if payload.time_slot else booking_doc["time_slot"]["end"]
+
+    # If rescheduling or changing rooms, validate time and check conflicts
+    if payload.time_slot is not None or (payload.room_id and payload.room_id != booking_doc["room_id"]):
         # Prevent rescheduling to a past time slot
         now_utc = datetime.now(timezone.utc)
-        if payload.time_slot.start < now_utc - timedelta(minutes=2):
+        if target_start < now_utc - timedelta(minutes=2):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Please select an upcoming time slot.",
             )
 
-        # Check conflict against other active bookings
+        # Check conflict against other active bookings in the target room
         conflicts = _find_conflicts(
             db=db,
-            room_id=booking_doc["room_id"],
-            start_time=payload.time_slot.start,
-            end_time=payload.time_slot.end,
+            room_id=target_room_id,
+            start_time=target_start,
+            end_time=target_end,
             exclude_booking_id=booking_id,
         )
         if conflicts:
@@ -434,11 +474,11 @@ def update_booking(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"Schedule conflict: Room is already booked from "
-                    f"{c_slot.get('start')} to {c_slot.get('end')}"
+                    f"Schedule conflict: Room is already booked for '{conflict_sample.get('title')}' during that time."
                 ),
             )
-        update_fields["time_slot"] = payload.time_slot.model_dump()
+        if payload.time_slot is not None:
+            update_fields["time_slot"] = payload.time_slot.model_dump()
 
     if update_fields:
         db["bookings"].update_one({"_id": booking_id}, {"$set": update_fields})
@@ -453,7 +493,7 @@ def update_booking(
             metadata=update_fields,
         )
 
-    return Booking(**booking_doc)
+    return _enrich_booking_docs(db, [booking_doc])[0]
 
 
 @router.delete(

@@ -21,6 +21,8 @@ class TimeSlot(BaseModel):
 class Attendee(BaseModel):
     user_id: str
     role: str = "attendee"  # "organizer", "co-host", "attendee"
+    name: Optional[str] = None
+    email: Optional[str] = None
 
 
 class CancellationRequest(BaseModel):
@@ -80,6 +82,7 @@ class BookingCreate(BaseModel):
 
 
 class BookingUpdate(BaseModel):
+    room_id: Optional[str] = None
     title: Optional[str] = Field(None, min_length=2, max_length=100)
     time_slot: Optional[TimeSlot] = None
     attendees: Optional[List[Attendee]] = None

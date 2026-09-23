@@ -4,7 +4,7 @@ from pymongo.database import Database
 
 from app.config import settings
 
-MONGO_URL = settings.MONGO_URL
+MONGO_URI = settings.MONGO_URI
 DB_NAME = settings.DB_NAME
 
 _client: Optional[MongoClient] = None
@@ -14,7 +14,7 @@ def get_client() -> MongoClient:
     """Return or initialize the PyMongo client singleton."""
     global _client
     if _client is None:
-        _client = MongoClient(MONGO_URL)
+        _client = MongoClient(MONGO_URI)
     return _client
 
 
