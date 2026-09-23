@@ -82,6 +82,7 @@ export const bookingsApi = {
   getMyBookings: (params) =>
     api.get(`/bookings?my_bookings=true${params ? '&' + new URLSearchParams(params).toString() : ''}`),
   create: (data) => api.post('/bookings', data),
+  update: (id, data) => api.patch(`/bookings/${id}`, data),
   getById: (id) => api.get(`/bookings/${id}`),
   cancel: (id) => api.delete(`/bookings/${id}`),
   requestCancel: (id, reason) => api.post(`/bookings/${id}/cancel-request`, { reason }),

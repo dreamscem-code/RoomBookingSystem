@@ -166,18 +166,28 @@ export function isHKPast(dateStr, timeStr) {
 }
 
 /**
- * Returns current time in Hong Kong formatted as "HH:MM" (24-hour).
+ * Returns time string in Hong Kong formatted as "HH:MM" (24-hour) for a given date or ISO string.
  */
-export function getHKCurrentTimeString() {
+export function getHKTime24(dateOrIso) {
+  const d = typeof dateOrIso === 'string' ? parseIsoDate(dateOrIso) : (dateOrIso || new Date());
+  if (!d || isNaN(d.getTime())) return '';
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: HONG_KONG_TZ,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).formatToParts(new Date());
+  }).formatToParts(d);
   const h = parts.find((p) => p.type === 'hour')?.value || '00';
   const m = parts.find((p) => p.type === 'minute')?.value || '00';
   return `${h}:${m}`;
 }
+
+/**
+ * Returns current time in Hong Kong formatted as "HH:MM" (24-hour).
+ */
+export function getHKCurrentTimeString() {
+  return getHKTime24(new Date());
+}
+
 
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { bookingsApi, roomsApi } from '../api';
+import AttendeeSelector from '../components/AttendeeSelector';
 import {
   Calendar,
   Clock,
@@ -14,12 +15,15 @@ import {
   X,
   XCircle,
   Sparkles,
+  Pencil,
 } from 'lucide-react';
 import {
   createHKIsoString,
   formatHKTimeRange,
   formatHKDate,
+  getHKDateKey,
   getHKTodayKey,
+  getHKTime24,
   getHKCurrentTimeString,
   getHKDefaultStartEndTimes,
   isHKPast,
@@ -52,6 +56,7 @@ export const ScheduleView = () => {
       date: getHKTodayKey(),
       startTime: upcoming.startTime,
       endTime: upcoming.endTime,
+      attendees: [],
     };
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -65,11 +70,26 @@ export const ScheduleView = () => {
       date: getHKTodayKey(),
       startTime: upcoming.startTime,
       endTime: upcoming.endTime,
+      attendees: [],
     }));
     setBookingError(null);
     setBookingSuccess(null);
     setIsModalOpen(true);
   };
+
+  // State for Edit / Reschedule modal
+  const [editModalBooking, setEditModalBooking] = useState(null);
+  const [editFormData, setEditFormData] = useState({
+    roomId: '',
+    title: '',
+    date: getHKTodayKey(),
+    startTime: '',
+    endTime: '',
+    attendees: [],
+  });
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [editSuccess, setEditSuccess] = useState(null);
 
   // State for cancellation request modal (Staff / Non-Admin)
   const [cancelModalBooking, setCancelModalBooking] = useState(null);
@@ -105,9 +125,9 @@ export const ScheduleView = () => {
     fetchTodayBookings();
   }, [fetchTodayBookings]);
 
-  // Load available rooms when modal opens
+  // Load available rooms when either modal opens
   useEffect(() => {
-    if (isModalOpen && rooms.length === 0) {
+    if ((isModalOpen || editModalBooking) && rooms.length === 0) {
       roomsApi.list()
         .then((data) => {
           const activeRooms = (data || []).filter((r) => r.is_active !== false);
@@ -118,7 +138,7 @@ export const ScheduleView = () => {
         })
         .catch((err) => console.error('Failed to load rooms:', err));
     }
-  }, [isModalOpen, rooms.length, formData.roomId]);
+  }, [isModalOpen, editModalBooking, rooms.length, formData.roomId]);
 
   // Robust UTC parser ensuring ISO strings without Z are properly treated as UTC
   const parseIsoDate = (isoStr) => {
@@ -209,11 +229,14 @@ export const ScheduleView = () => {
           start: startIso,
           end: endIso,
         },
-        attendees: [],
+        attendees: (formData.attendees || []).map((att) => ({
+          user_id: att.user_id,
+          role: att.role || 'attendee',
+        })),
       });
 
       setBookingSuccess('Room booked successfully!');
-      setFormData((prev) => ({ ...prev, title: '' }));
+      setFormData((prev) => ({ ...prev, title: '', attendees: [] }));
       window.dispatchEvent(new CustomEvent('booking-updated'));
       setTimeout(() => {
         setIsModalOpen(false);
@@ -225,6 +248,85 @@ export const ScheduleView = () => {
       setBookingError(err.message || 'Failed to reserve room.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Open Edit / Reschedule Modal
+  const handleOpenEditModal = (booking) => {
+    const startIso = booking.time_slot?.start;
+    const endIso = booking.time_slot?.end;
+    const dateKey = startIso ? getHKDateKey(startIso) : getHKTodayKey();
+    const startTime = startIso ? getHKTime24(startIso) : '09:00';
+    const endTime = endIso ? getHKTime24(endIso) : '10:00';
+
+    setEditModalBooking(booking);
+    setEditFormData({
+      roomId: booking.room_id || (rooms.length > 0 ? rooms[0]._id : ''),
+      title: booking.title || '',
+      date: dateKey,
+      startTime: startTime,
+      endTime: endTime,
+      attendees: Array.isArray(booking.attendees) ? [...booking.attendees] : [],
+    });
+    setEditError(null);
+    setEditSuccess(null);
+  };
+
+  // Handle Edit submission
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    setEditError(null);
+    setEditSuccess(null);
+
+    if (!editModalBooking) return;
+    if (!editFormData.roomId || !editFormData.title.trim()) {
+      setEditError('Please enter a meeting title and choose a room.');
+      return;
+    }
+
+    try {
+      setIsUpdating(true);
+      const startIso = createHKIsoString(editFormData.date, editFormData.startTime);
+      const endIso = createHKIsoString(editFormData.date, editFormData.endTime);
+
+      if (new Date(startIso) >= new Date(endIso)) {
+        setEditError('End time must be strictly after start time.');
+        setIsUpdating(false);
+        return;
+      }
+
+      if (isHKPast(editFormData.date, editFormData.startTime)) {
+        setEditError('Please select an upcoming time slot.');
+        setIsUpdating(false);
+        return;
+      }
+
+      const bookingId = editModalBooking.id || editModalBooking._id;
+      await bookingsApi.update(bookingId, {
+        room_id: editFormData.roomId,
+        title: editFormData.title.trim(),
+        time_slot: {
+          start: startIso,
+          end: endIso,
+        },
+        attendees: (editFormData.attendees || []).map((att) => ({
+          user_id: att.user_id,
+          role: att.role || 'attendee',
+        })),
+      });
+
+      setEditSuccess('Booking updated successfully!');
+      window.dispatchEvent(new CustomEvent('booking-updated'));
+      setTimeout(() => {
+        setEditModalBooking(null);
+        setEditSuccess(null);
+        fetchTodayBookings(true);
+      }, 900);
+    } catch (err) {
+      console.error('Failed to update booking:', err);
+      setEditError(err.message || 'Failed to update booking.');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -290,10 +392,9 @@ export const ScheduleView = () => {
       window.dispatchEvent(new CustomEvent('booking-updated'));
       fetchTodayBookings(true);
       alert(
-        `Cancellation request ${
-          action === 'approved'
-            ? 'approved. The booking is cancelled and room has been freed.'
-            : 'rejected. The booking remains confirmed.'
+        `Cancellation request ${action === 'approved'
+          ? 'approved. The booking is cancelled and room has been freed.'
+          : 'rejected. The booking remains confirmed.'
         }`
       );
     } catch (err) {
@@ -448,10 +549,23 @@ export const ScheduleView = () => {
                       </h4>
 
                       {/* Date & Time Slot */}
-                      <div className="flex items-center space-x-2 text-sm text-slate-600 mb-4 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200/60 font-medium">
+                      <div className="flex items-center space-x-2 text-sm text-slate-600 mb-3 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200/60 font-medium">
                         <Clock className="w-4 h-4 text-[#1977cc] flex-shrink-0" />
                         <span>{formatTimeRange(booking.time_slot.start, booking.time_slot.end)}</span>
                       </div>
+
+                      {/* Attendees preview */}
+                      {Array.isArray(booking.attendees) && booking.attendees.length > 0 && (
+                        <div className="flex items-center space-x-2 text-xs text-slate-600 mb-3 bg-blue-50/50 px-2.5 py-1.5 rounded-lg border border-blue-100/70">
+                          <Users className="w-3.5 h-3.5 text-[#1977cc] flex-shrink-0" />
+                          <span className="font-semibold text-slate-700">
+                            {booking.attendees.length} Attendee{booking.attendees.length === 1 ? '' : 's'}:
+                          </span>
+                          <span className="truncate text-slate-600 text-[11px]">
+                            {booking.attendees.map((a) => a.name || a.email || 'Colleague').join(', ')}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Bottom: Booked By info */}
@@ -477,49 +591,63 @@ export const ScheduleView = () => {
                         </div>
                       </div>
 
-                      {/* Cancel or Review Action */}
-                      {booking.status === 'cancellation_pending' ? (
-                        isAdminOrSupervisor ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setReviewModalBooking(booking);
-                              setAdminNotes('');
-                              setReviewError(null);
-                            }}
-                            className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition cursor-pointer flex items-center space-x-1"
-                          >
-                            <span>Review Request</span>
-                          </button>
+                      {/* Actions: Edit & Cancel */}
+                      <div className="flex items-center space-x-1.5">
+                        {booking.status === 'cancellation_pending' ? (
+                          isAdminOrSupervisor ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReviewModalBooking(booking);
+                                setAdminNotes('');
+                                setReviewError(null);
+                              }}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition cursor-pointer flex items-center space-x-1"
+                            >
+                              <span>Review Request</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                              Pending Review
+                            </span>
+                          )
                         ) : (
-                          <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                            Pending Review
-                          </span>
-                        )
-                      ) : (
-                        booking.status === 'confirmed' &&
-                        new Date() < parseIsoDate(booking.time_slot?.end) && (
-                          <button
-                            type="button"
-                            onClick={() => handleCancelClick(booking)}
-                            title={
-                              isAdminOrSupervisor
-                                ? 'Cancel booking immediately (Admin/Supervisor)'
-                                : 'Submit cancellation request to admin/supervisor'
-                            }
-                            className={`p-1.5 rounded-lg transition cursor-pointer flex items-center space-x-1 ${
-                              isAdminOrSupervisor
-                                ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                                : 'text-slate-500 hover:text-amber-700 hover:bg-amber-50 bg-slate-50 border border-slate-200/80 px-2.5'
-                            }`}
-                          >
-                            <XCircle className="w-3.5 h-3.5 text-rose-500" />
-                            {!isAdminOrSupervisor && (
-                              <span className="text-[11px] font-medium text-slate-700">Request Cancel</span>
-                            )}
-                          </button>
-                        )
-                      )}
+                          booking.status === 'confirmed' &&
+                          new Date() < parseIsoDate(booking.time_slot?.end) && (
+                            <>
+                              {(isCreator || isAdminOrSupervisor) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditModal(booking)}
+                                  title="Edit / Reschedule Booking"
+                                  className="p-1.5 rounded-lg text-slate-600 hover:text-[#1977cc] hover:bg-blue-50 bg-slate-50 border border-slate-200/80 transition cursor-pointer flex items-center space-x-1"
+                                >
+                                  <Pencil className="w-3.5 h-3.5 text-[#1977cc]" />
+                                  <span className="text-[11px] font-medium">Edit</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleCancelClick(booking)}
+                                title={
+                                  isAdminOrSupervisor
+                                    ? 'Cancel booking immediately (Admin/Supervisor)'
+                                    : 'Submit cancellation request to admin/supervisor'
+                                }
+                                className={`p-1.5 rounded-lg transition cursor-pointer flex items-center space-x-1 ${isAdminOrSupervisor
+                                    ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                    : 'text-slate-500 hover:text-amber-700 hover:bg-amber-50 bg-slate-50 border border-slate-200/80 px-2.5'
+                                  }`}
+                              >
+                                <XCircle className="w-3.5 h-3.5 text-rose-500" />
+                                {!isAdminOrSupervisor && (
+                                  <span className="text-[11px] font-medium text-slate-700">Request Cancel</span>
+                                )}
+                              </button>
+                            </>
+                          )
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -580,7 +708,7 @@ export const ScheduleView = () => {
                   ) : (
                     rooms.map((room) => (
                       <option key={room._id} value={room._id}>
-                        {room.name} {room.capacity ? `(Capacity: ${room.capacity})` : ''}
+                        {room.name}
                       </option>
                     ))
                   )}
@@ -635,11 +763,10 @@ export const ScheduleView = () => {
                           value={formData.startTime}
                           onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
                           required
-                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${
-                            isPastSelected
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${isPastSelected
                               ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
                               : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
-                          }`}
+                            }`}
                         />
                       </div>
 
@@ -653,11 +780,10 @@ export const ScheduleView = () => {
                           value={formData.endTime}
                           onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
                           required
-                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${
-                            isInvalidTimeOrder
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${isInvalidTimeOrder
                               ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
                               : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
-                          }`}
+                            }`}
                         />
                       </div>
                     </div>
@@ -675,6 +801,24 @@ export const ScheduleView = () => {
                         <span>End time must be strictly after start time.</span>
                       </div>
                     )}
+
+                    {/* Attendee Selection */}
+                    <div className="pt-2 border-t border-slate-100">
+                      <AttendeeSelector
+                        value={formData.attendees}
+                        onChange={(newAttendees) =>
+                          setFormData({ ...formData, attendees: newAttendees })
+                        }
+                        roomCapacity={rooms.find((r) => (r._id || r.id) === formData.roomId)?.capacity}
+                        organizerId={user?.id || user?._id}
+                        organizerName={
+                          user?.profile
+                            ? `${user.profile.first_name || ''} ${user.profile.last_name || ''}`.trim() || user.email
+                            : user?.email
+                        }
+                        disabled={isSubmitting}
+                      />
+                    </div>
 
                     <div className="pt-4 flex items-center justify-end space-x-3">
                       <button
@@ -696,6 +840,200 @@ export const ScheduleView = () => {
                           </>
                         ) : (
                           <span>Confirm Booking</span>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MODAL: EDIT / RESCHEDULE BOOKING */}
+      {editModalBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setEditModalBooking(null)}
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 mb-6">
+              <div className="p-2.5 bg-[#1977cc]/10 text-[#1977cc] rounded-xl">
+                <Pencil className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Edit / Reschedule Booking</h3>
+                <p className="text-slate-500 text-xs mt-0.5">Modify room, title, date, or time slot with conflict checks</p>
+              </div>
+            </div>
+
+            {editError && (
+              <div className="mb-5 p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            {editSuccess && (
+              <div className="mb-5 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-xl flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                <span>{editSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Select Room
+                </label>
+                <select
+                  value={editFormData.roomId}
+                  onChange={(e) => setEditFormData({ ...editFormData, roomId: e.target.value })}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#1977cc]/20 focus:border-[#1977cc] bg-white transition"
+                >
+                  {rooms.length === 0 ? (
+                    <option value={editFormData.roomId || ''}>
+                      {editModalBooking.room_name || 'Current Room'}
+                    </option>
+                  ) : (
+                    rooms.map((room) => (
+                      <option key={room._id} value={room._id}>
+                        {room.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Meeting Title or Purpose
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Weekly Design Review"
+                  value={editFormData.title}
+                  onChange={(e) => setEditFormData({ ...editFormData, title: e.target.value })}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#1977cc]/20 focus:border-[#1977cc] transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  min={getHKTodayKey()}
+                  value={editFormData.date}
+                  onChange={(e) => setEditFormData({ ...editFormData, date: e.target.value })}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#1977cc]/20 focus:border-[#1977cc] transition"
+                />
+              </div>
+
+              {(() => {
+                const isTodaySelected = editFormData.date === getHKTodayKey();
+                const isPastSelected = isHKPast(editFormData.date, editFormData.startTime);
+                const isInvalidTimeOrder =
+                  Boolean(editFormData.startTime && editFormData.endTime && editFormData.startTime >= editFormData.endTime);
+                const hkCurrentTime = getHKCurrentTimeString();
+
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Start Time
+                        </label>
+                        <input
+                          type="time"
+                          min={isTodaySelected ? hkCurrentTime : undefined}
+                          value={editFormData.startTime}
+                          onChange={(e) => setEditFormData({ ...editFormData, startTime: e.target.value })}
+                          required
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${isPastSelected
+                              ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
+                              : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
+                            }`}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          End Time
+                        </label>
+                        <input
+                          type="time"
+                          min={editFormData.startTime || (isTodaySelected ? hkCurrentTime : undefined)}
+                          value={editFormData.endTime}
+                          onChange={(e) => setEditFormData({ ...editFormData, endTime: e.target.value })}
+                          required
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${isInvalidTimeOrder
+                              ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
+                              : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
+                            }`}
+                        />
+                      </div>
+                    </div>
+
+                    {isPastSelected && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                        <span>Please select an upcoming time slot.</span>
+                      </div>
+                    )}
+
+                    {isInvalidTimeOrder && !isPastSelected && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                        <span>End time must be strictly after start time.</span>
+                      </div>
+                    )}
+
+                    {/* Attendee Selection for Edit Modal */}
+                    <div className="pt-2 border-t border-slate-100">
+                      <AttendeeSelector
+                        value={editFormData.attendees}
+                        onChange={(newAttendees) =>
+                          setEditFormData({ ...editFormData, attendees: newAttendees })
+                        }
+                        roomCapacity={rooms.find((r) => (r._id || r.id) === editFormData.roomId)?.capacity}
+                        organizerId={editModalBooking?.created_by}
+                        organizerName={
+                          editModalBooking?.creator_name || editModalBooking?.creator_email || 'Organizer'
+                        }
+                        disabled={isUpdating}
+                      />
+                    </div>
+
+                    <div className="pt-4 flex items-center justify-end space-x-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditModalBooking(null)}
+                        className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isUpdating || isPastSelected || isInvalidTimeOrder}
+                        className="px-5 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white text-sm font-semibold shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center space-x-2"
+                      >
+                        {isUpdating ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Saving Changes...</span>
+                          </>
+                        ) : (
+                          <span>Save Changes</span>
                         )}
                       </button>
                     </div>
