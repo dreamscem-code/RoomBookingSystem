@@ -7,17 +7,22 @@ from email.utils import formatdate, make_msgid
 from typing import Dict, List, Optional, Set
 from pymongo.database import Database
 
+from zoneinfo import ZoneInfo
 from app.config import settings
 from app.schemas.booking import Booking
 from app.schemas.common import NotificationChannel
 from app.schemas.user import User
 
 logger = logging.getLogger("uvicorn")
+HK_TZ = ZoneInfo("Asia/Hong_Kong")
 
 
 def _format_datetime(dt: datetime) -> str:
-    """Format datetime into human-readable string."""
-    return dt.strftime("%A, %b %d, %Y at %I:%M %p UTC")
+    """Format datetime into human-readable Hong Kong Time (HKT, UTC+8)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt_hk = dt.astimezone(HK_TZ)
+    return dt_hk.strftime("%A, %b %d, %Y at %I:%M %p HKT")
 
 
 def _send_email_smtp(
@@ -76,13 +81,14 @@ def _log_notification(
     title: str,
     message: str,
     channel: NotificationChannel = NotificationChannel.EMAIL,
-    status: str = "unread",
-) -> None:
-    """Persist notification record to notification_logs collection."""
+    status: str = "sent",
+) -> str:
+    """Persist notification record immediately to notification_logs collection."""
+    notif_id = str(uuid.uuid4())
     try:
         db["notification_logs"].insert_one(
             {
-                "_id": str(uuid.uuid4()),
+                "_id": notif_id,
                 "recipient_id": recipient_id,
                 "channel": channel.value if hasattr(channel, "value") else channel,
                 "title": title,
@@ -94,6 +100,7 @@ def _log_notification(
         )
     except Exception as exc:
         logger.warning(f"Could not persist notification log: {exc}")
+    return notif_id
 
 
 def send_booking_created_notification(
@@ -184,6 +191,16 @@ Room Booking Team
         if not user_email:
             continue
 
+        # Persist notification log immediately so it appears in in-app inbox instantly
+        notif_id = _log_notification(
+            db=db,
+            recipient_id=user_id,
+            title=subject,
+            message=f"Booking '{booking.title}' in {booking.room_name} from {start_str} to {end_str}",
+            channel=NotificationChannel.EMAIL,
+            status="sent",
+        )
+
         success = _send_email_smtp(
             to_email=user_email,
             subject=subject,
@@ -192,14 +209,11 @@ Room Booking Team
             reply_to=organizer.email,
         )
 
-        _log_notification(
-            db=db,
-            recipient_id=user_id,
-            title=subject,
-            message=f"Booking '{booking.title}' in {booking.room_name} from {start_str} to {end_str}",
-            channel=NotificationChannel.EMAIL,
-            status="sent" if success else "failed",
-        )
+        if not success:
+            db["notification_logs"].update_one(
+                {"_id": notif_id},
+                {"$set": {"status": "failed"}},
+            )
 
 
 def send_booking_cancelled_notification(
@@ -263,6 +277,16 @@ Room Booking Team
         if not user_email:
             continue
 
+        # Log immediately so user sees it in their notification inbox without waiting for SMTP
+        notif_id = _log_notification(
+            db=db,
+            recipient_id=user_id,
+            title=subject,
+            message=f"Booking '{booking.title}' was cancelled by {cancelled_by.email}. {reason or ''}".strip(),
+            channel=NotificationChannel.EMAIL,
+            status="sent",
+        )
+
         success = _send_email_smtp(
             to_email=user_email,
             subject=subject,
@@ -270,14 +294,12 @@ Room Booking Team
             html_content=html_body,
             reply_to=cancelled_by.email,
         )
-        _log_notification(
-            db=db,
-            recipient_id=user_id,
-            title=subject,
-            message=f"Booking '{booking.title}' was cancelled by {cancelled_by.email}. {reason or ''}",
-            channel=NotificationChannel.EMAIL,
-            status="sent" if success else "failed",
-        )
+
+        if not success:
+            db["notification_logs"].update_one(
+                {"_id": notif_id},
+                {"$set": {"status": "failed"}},
+            )
 
 
 def send_cancellation_requested_notification(
@@ -353,6 +375,16 @@ Room Booking System
         if not admin_email:
             continue
 
+        # Log immediately for admins
+        notif_id = _log_notification(
+            db=db,
+            recipient_id=admin_id,
+            title=subject,
+            message=f"Cancellation request by {requested_by.email} for '{booking.title}' ({booking.room_name}). Reason: {reason}",
+            channel=NotificationChannel.EMAIL,
+            status="sent",
+        )
+
         success = _send_email_smtp(
             to_email=admin_email,
             subject=subject,
@@ -360,11 +392,73 @@ Room Booking System
             html_content=html_body,
             reply_to=requested_by.email,
         )
-        _log_notification(
-            db=db,
-            recipient_id=admin_id,
-            title=subject,
-            message=f"Cancellation request by {requested_by.email} for '{booking.title}' ({booking.room_name}). Reason: {reason}",
-            channel=NotificationChannel.EMAIL,
-            status="sent" if success else "failed",
+
+        if not success:
+            db["notification_logs"].update_one(
+                {"_id": notif_id},
+                {"$set": {"status": "failed"}},
+            )
+
+
+def send_cancellation_reviewed_notification(
+    db: Database,
+    booking: Booking,
+    reviewed_by: User,
+    action: str,
+    admin_notes: Optional[str] = None,
+) -> None:
+    """Notify the user who requested cancellation about the administrator's review decision."""
+    c_req = booking.cancellation_request
+    if not c_req or not c_req.requested_by:
+        return
+
+    requester_doc = db["users"].find_one({"_id": c_req.requested_by, "is_active": True})
+    if not requester_doc or not requester_doc.get("email"):
+        return
+
+    reviewer_name = (
+        f"{reviewed_by.profile.first_name} {reviewed_by.profile.last_name}".strip()
+        if reviewed_by.profile
+        else reviewed_by.email
+    )
+    is_approved = action.lower() == "approved"
+    decision_title = "Approved" if is_approved else "Rejected"
+    subject = f"Cancellation Request {decision_title}: '{booking.title}' in {booking.room_name}"
+    start_str = _format_datetime(booking.time_slot.start)
+    end_str = _format_datetime(booking.time_slot.end)
+    notes_text = f"\n  Admin Notes:   {admin_notes}" if admin_notes else ""
+
+    text_body = f"""Hello,
+
+Your cancellation request for room booking '{booking.title}' has been {action.upper()} by {reviewer_name}.
+
+  Meeting:       {booking.title}
+  Room:          {booking.room_name}
+  Start Time:    {start_str}
+  End Time:      {end_str}
+  Decision:      {decision_title}{notes_text}
+
+Best regards,
+Room Booking System
+"""
+
+    notif_id = _log_notification(
+        db=db,
+        recipient_id=requester_doc["_id"],
+        title=subject,
+        message=f"Your cancellation request for '{booking.title}' was {action} by {reviewer_name}. {admin_notes or ''}".strip(),
+        channel=NotificationChannel.EMAIL,
+        status="sent",
+    )
+
+    success = _send_email_smtp(
+        to_email=requester_doc["email"],
+        subject=subject,
+        text_content=text_body,
+        reply_to=reviewed_by.email,
+    )
+    if not success:
+        db["notification_logs"].update_one(
+            {"_id": notif_id},
+            {"$set": {"status": "failed"}},
         )

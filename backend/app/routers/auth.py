@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pymongo.database import Database
 
 from app.db import get_database
+from app.schemas.common import RoleName
 from app.schemas.user import (
     PasswordChangeRequest,
     ProfileUpdate,

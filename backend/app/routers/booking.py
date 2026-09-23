@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pymongo import ASCENDING, DESCENDING
@@ -9,6 +9,7 @@ from app.services.notification import (
     send_booking_cancelled_notification,
     send_booking_created_notification,
     send_cancellation_requested_notification,
+    send_cancellation_reviewed_notification,
 )
 
 from app.db import get_database
@@ -136,9 +137,13 @@ def get_today_bookings(
     current_user: User = Depends(get_current_user),
 ):
     """Retrieve all bookings scheduled for today with organizer details."""
-    now = datetime.now(timezone.utc)
-    start_of_today = datetime(now.year, now.month, now.day, 0, 0, 0, tzinfo=timezone.utc)
-    end_of_today = datetime(now.year, now.month, now.day, 23, 59, 59, 999999, tzinfo=timezone.utc)
+    from zoneinfo import ZoneInfo
+    hk_tz = ZoneInfo("Asia/Hong_Kong")
+    now_hk = datetime.now(hk_tz)
+    start_of_today_hk = datetime(now_hk.year, now_hk.month, now_hk.day, 0, 0, 0, tzinfo=hk_tz)
+    end_of_today_hk = datetime(now_hk.year, now_hk.month, now_hk.day, 23, 59, 59, 999999, tzinfo=hk_tz)
+    start_of_today = start_of_today_hk.astimezone(timezone.utc)
+    end_of_today = end_of_today_hk.astimezone(timezone.utc)
 
     query = {
         "$or": [
@@ -179,9 +184,15 @@ def check_room_availability(
         )
 
     conflicts = _find_conflicts(db, room_id, start_time, end_time)
+    
+    # Slots in the past are not available for new reservations
+    now_utc = datetime.now(timezone.utc)
+    start_utc = start_time.replace(tzinfo=timezone.utc) if start_time.tzinfo is None else start_time.astimezone(timezone.utc)
+    is_in_past = start_utc < now_utc - timedelta(minutes=2)
+
     return AvailabilityResponse(
         room_id=room_id,
-        is_available=len(conflicts) == 0 and room.get("is_active", True),
+        is_available=len(conflicts) == 0 and room.get("is_active", True) and not is_in_past,
         conflicting_bookings=[Booking(**doc) for doc in conflicts],
     )
 
@@ -233,7 +244,15 @@ def create_booking(
             detail="Cannot book a deactivated room",
         )
 
-    # 2. Check for scheduling conflicts
+    # 2. Prevent booking in the past (allowing 2-minute buffer for form submission)
+    now_utc = datetime.now(timezone.utc)
+    if payload.time_slot.start < now_utc - timedelta(minutes=2):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please select an upcoming time slot.",
+        )
+
+    # 3. Check for scheduling conflicts
     conflicts = _find_conflicts(
         db=db,
         room_id=payload.room_id,
@@ -393,6 +412,14 @@ def update_booking(
         update_fields["attendees"] = [att.model_dump() for att in payload.attendees]
 
     if payload.time_slot is not None:
+        # Prevent rescheduling to a past time slot
+        now_utc = datetime.now(timezone.utc)
+        if payload.time_slot.start < now_utc - timedelta(minutes=2):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please select an upcoming time slot.",
+            )
+
         # Check conflict against other active bookings
         conflicts = _find_conflicts(
             db=db,
@@ -625,5 +652,15 @@ def review_cancellation_request(
             cancelled_by=current_user,
             reason=f"Approved cancellation request. {payload.admin_notes or ''}".strip(),
         )
+
+    # Notify requester of decision (Approved or Rejected)
+    background_tasks.add_task(
+        send_cancellation_reviewed_notification,
+        db=db,
+        booking=Booking(**booking_doc),
+        reviewed_by=current_user,
+        action=payload.action.value,
+        admin_notes=payload.admin_notes,
+    )
 
     return Booking(**booking_doc)

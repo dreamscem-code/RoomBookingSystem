@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # MongoDB Settings
-    MONGO_URL: str
+    MONGO_URL: str = Field(
+        default="mongodb://localhost:27017",
+        validation_alias=AliasChoices("MONGO_URL", "MONGO_URI"),
+    )
     DB_NAME: str = "RoomBookingDB"
 
     # Security & JWT

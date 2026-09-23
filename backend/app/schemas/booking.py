@@ -32,6 +32,15 @@ class CancellationRequest(BaseModel):
     reviewed_at: Optional[datetime] = None
     admin_notes: Optional[str] = None
 
+    @field_validator("requested_at", "reviewed_at", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+
 
 class Booking(MongoBaseModel):
     id: str = Field(..., alias="_id")
@@ -46,6 +55,15 @@ class Booking(MongoBaseModel):
     attendees: List[Attendee] = []
     cancellation_request: Optional[CancellationRequest] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
 
 
 class BookingCreate(BaseModel):

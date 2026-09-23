@@ -18,6 +18,15 @@ class UserRole(BaseModel):
     role_name: RoleName
     assigned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @field_validator("assigned_at", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+
 
 class User(MongoBaseModel):
     """User document representation without sensitive fields."""
@@ -29,6 +38,15 @@ class User(MongoBaseModel):
     profile: Profile
     roles: List[UserRole] = []
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("created_at", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
 
 
 class UserInDB(User):
