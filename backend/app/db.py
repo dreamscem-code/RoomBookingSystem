@@ -53,6 +53,11 @@ def init_db_indexes(db: Database) -> None:
     db["bookings"].create_indexes([
         IndexModel([("room_id", ASCENDING)], name="idx_booking_room_id"),
         IndexModel([("created_by", ASCENDING)], name="idx_booking_created_by"),
+        IndexModel([("time_slot.start", ASCENDING)], name="idx_booking_time_start"),
+        IndexModel(
+            [("time_slot.start", ASCENDING), ("time_slot.end", ASCENDING)],
+            name="idx_booking_time_range",
+        ),
         IndexModel(
             [
                 ("room_id", ASCENDING),
