@@ -75,20 +75,111 @@ export const authApi = {
   changePassword: (passwords) => api.post('/auth/change-password', passwords),
 };
 
-// Bookings API Endpoints
+// Lightweight In-Memory RAM Cache with TTL
+const _apiCache = new Map();
+
+export function getCached(key, maxAgeMs = 180000) {
+  const item = _apiCache.get(key);
+  if (!item) return null;
+  if (Date.now() - item.timestamp > maxAgeMs) {
+    _apiCache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+export function setCached(key, data) {
+  _apiCache.set(key, { data, timestamp: Date.now() });
+}
+
+export function invalidateCache(prefix) {
+  if (!prefix) {
+    _apiCache.clear();
+    return;
+  }
+  for (const key of _apiCache.keys()) {
+    if (key.startsWith(prefix)) {
+      _apiCache.delete(key);
+    }
+  }
+}
+
+// Bookings API Endpoints with Caching & Auto-Invalidation
 export const bookingsApi = {
-  getToday: (params) => api.get(`/bookings/today${params ? '?' + new URLSearchParams(params).toString() : ''}`),
-  list: (params) => api.get(`/bookings${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  getToday: async (params, useCache = true) => {
+    const cacheKey = params ? `bookings_today_${new URLSearchParams(params).toString()}` : 'bookings_today';
+    if (useCache) {
+      const cached = getCached(cacheKey, 90000);
+      if (cached) return cached;
+    }
+    const data = await api.get(`/bookings/today${params ? '?' + new URLSearchParams(params).toString() : ''}`);
+    setCached(cacheKey, data);
+    return data;
+  },
+  list: async (params, useCache = true) => {
+    const cacheKey = params ? `bookings_list_${new URLSearchParams(params).toString()}` : 'bookings_list';
+    if (useCache) {
+      const cached = getCached(cacheKey, 90000);
+      if (cached) return cached;
+    }
+    const data = await api.get(`/bookings${params ? '?' + new URLSearchParams(params).toString() : ''}`);
+    setCached(cacheKey, data);
+    return data;
+  },
   getMyBookings: (params) =>
     api.get(`/bookings?my_bookings=true${params ? '&' + new URLSearchParams(params).toString() : ''}`),
-  create: (data) => api.post('/bookings', data),
-  update: (id, data) => api.patch(`/bookings/${id}`, data),
+  create: async (data) => {
+    invalidateCache('bookings_');
+    return api.post('/bookings', data);
+  },
+  update: async (id, data) => {
+    invalidateCache('bookings_');
+    return api.patch(`/bookings/${id}`, data);
+  },
   getById: (id) => api.get(`/bookings/${id}`),
-  cancel: (id) => api.delete(`/bookings/${id}`),
-  requestCancel: (id, reason) => api.post(`/bookings/${id}/cancel-request`, { reason }),
-  reviewCancel: (id, action, admin_notes) => api.post(`/bookings/${id}/cancel-review`, { action, admin_notes }),
+  cancel: async (id) => {
+    invalidateCache('bookings_');
+    return api.delete(`/bookings/${id}`);
+  },
+  requestCancel: async (id, reason) => {
+    invalidateCache('bookings_');
+    return api.post(`/bookings/${id}/cancel-request`, { reason });
+  },
+  reviewCancel: async (id, action, admin_notes) => {
+    invalidateCache('bookings_');
+    return api.post(`/bookings/${id}/cancel-review`, { action, admin_notes });
+  },
   getPendingCancellations: () => api.get('/bookings/cancellations/pending'),
 };
+
+/**
+ * Prefetch bookings for a given month into RAM cache.
+ * Can be called in the background or when hovering links.
+ */
+export async function prefetchMonthBookings(targetDate = new Date()) {
+  try {
+    const year = targetDate.getFullYear();
+    const month = targetDate.getMonth();
+    const startOfMonth = new Date(year, month, 1, 0, 0, 0);
+    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
+
+    const startDate = new Date(startOfMonth);
+    startDate.setDate(startDate.getDate() - startDate.getDay());
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(endOfMonth);
+    endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+    endDate.setHours(23, 59, 59, 999);
+
+    const params = {
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+    };
+    return await bookingsApi.list(params);
+  } catch (err) {
+    console.debug('Prefetch error:', err);
+  }
+}
 
 // Notifications API Endpoints
 export const notificationsApi = {
@@ -101,19 +192,47 @@ export const notificationsApi = {
 
 // Rooms API Endpoints
 export const roomsApi = {
-  list: (params) => api.get(`/rooms${params ? '?' + new URLSearchParams(params).toString() : ''}`),
+  list: async (params) => {
+    const cacheKey = params ? `rooms_${new URLSearchParams(params).toString()}` : 'rooms_all';
+    const cached = getCached(cacheKey, 120000);
+    if (cached) return cached;
+    const data = await api.get(`/rooms${params ? '?' + new URLSearchParams(params).toString() : ''}`);
+    setCached(cacheKey, data);
+    return data;
+  },
   getById: (id) => api.get(`/rooms/${id}`),
-  create: (data) => api.post('/rooms', data),
-  update: (id, data) => api.patch(`/rooms/${id}`, data),
-  delete: (id) => api.delete(`/rooms/${id}`),
+  create: async (data) => {
+    invalidateCache('rooms_');
+    return api.post('/rooms', data);
+  },
+  update: async (id, data) => {
+    invalidateCache('rooms_');
+    return api.patch(`/rooms/${id}`, data);
+  },
+  delete: async (id) => {
+    invalidateCache('rooms_');
+    return api.delete(`/rooms/${id}`);
+  },
 };
 
 // Users API Endpoints
 export const usersApi = {
-  list: (params) => api.get(`/users${params ? '?' + new URLSearchParams(params).toString() : ''}`),
-  updateRoles: (id, payload) =>
-    api.patch(`/users/${id}/roles`, Array.isArray(payload) ? { roles: payload } : payload),
-  delete: (id) => api.delete(`/users/${id}`),
+  list: async (params) => {
+    const cacheKey = params ? `users_${new URLSearchParams(params).toString()}` : 'users_all';
+    const cached = getCached(cacheKey, 180000);
+    if (cached) return cached;
+    const data = await api.get(`/users${params ? '?' + new URLSearchParams(params).toString() : ''}`);
+    setCached(cacheKey, data);
+    return data;
+  },
+  updateRoles: async (id, payload) => {
+    invalidateCache('users_');
+    return api.patch(`/users/${id}/roles`, Array.isArray(payload) ? { roles: payload } : payload);
+  },
+  delete: async (id) => {
+    invalidateCache('users_');
+    return api.delete(`/users/${id}`);
+  },
 };
 
 // Issues API Endpoints

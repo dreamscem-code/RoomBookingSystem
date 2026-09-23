@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { prefetchMonthBookings } from '../api';
 import NotificationBell from './NotificationBell';
 import {
   Home,
@@ -71,6 +72,7 @@ export const Navbar = () => {
                 {/* Calendar View Bookings Nav Link */}
                 <Link
                   to="/calendar"
+                  onMouseEnter={() => prefetchMonthBookings()}
                   className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/calendar')
                     ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
                     : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { bookingsApi, roomsApi } from '../api';
+import { bookingsApi, roomsApi, getCached, prefetchMonthBookings } from '../api';
 import AttendeeSelector from '../components/AttendeeSelector';
+import BookingDetailsModal from '../components/BookingDetailsModal';
 import {
   Calendar,
   Clock,
@@ -39,6 +40,14 @@ export const ScheduleView = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [includeCancelled, setIncludeCancelled] = useState(false);
+
+  // Filter bookings: when includeCancelled is checked, show exclusively cancelled bookings
+  const displayedBookings = useMemo(() => {
+    if (includeCancelled) {
+      return todayBookings.filter((b) => b.status?.toLowerCase() === 'cancelled');
+    }
+    return todayBookings.filter((b) => b.status?.toLowerCase() !== 'cancelled');
+  }, [todayBookings, includeCancelled]);
 
   // Role detection
   const isAdminOrSupervisor = user?.roles?.some((r) =>
@@ -103,18 +112,33 @@ export const ScheduleView = () => {
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState(null);
 
-  // Fetch today's bookings
+  // State for Booking Details Popover Modal
+  const [selectedBookingForDetails, setSelectedBookingForDetails] = useState(null);
+
+  // Fetch today's bookings with instant cache check
   const fetchTodayBookings = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setIsRefreshing(true);
-    else setIsLoading(true);
+    const params = { include_cancelled: includeCancelled };
+    const cacheKey = `bookings_today_${new URLSearchParams(params).toString()}`;
+    const cached = getCached(cacheKey);
+
+    if (cached) {
+      setTodayBookings(cached);
+      setIsLoading(false);
+      if (showRefreshing) setIsRefreshing(true);
+    } else {
+      if (showRefreshing) setIsRefreshing(true);
+      else setIsLoading(true);
+    }
     setError(null);
 
     try {
-      const data = await bookingsApi.getToday({ include_cancelled: includeCancelled });
+      const data = await bookingsApi.getToday(params, !showRefreshing);
       setTodayBookings(data || []);
     } catch (err) {
-      console.error("Failed to load today's bookings:", err);
-      setError(err.message || 'Unable to retrieve today bookings.');
+      if (!cached) {
+        console.error("Failed to load today's bookings:", err);
+        setError(err.message || 'Unable to retrieve today bookings.');
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -124,6 +148,14 @@ export const ScheduleView = () => {
   useEffect(() => {
     fetchTodayBookings();
   }, [fetchTodayBookings]);
+
+  // Background prefetch: quietly cache this month's calendar bookings so Calendar tab opens instantly
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      prefetchMonthBookings();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Load available rooms when either modal opens
   useEffect(() => {
@@ -437,8 +469,15 @@ export const ScheduleView = () => {
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                   Rooms Booked for Today
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                  {todayBookings.length} {todayBookings.length === 1 ? 'Booking' : 'Bookings'}
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    includeCancelled
+                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                      : 'bg-blue-50 text-blue-700 border border-blue-200'
+                  }`}
+                >
+                  {displayedBookings.length} {includeCancelled ? 'Cancelled' : ''}{' '}
+                  {displayedBookings.length === 1 ? 'Booking' : 'Bookings'}
                 </span>
               </div>
               <p className="text-slate-500 text-sm mt-0.5 flex items-center gap-1.5">
@@ -450,14 +489,20 @@ export const ScheduleView = () => {
 
           {/* Action and Filter Controls */}
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200/80 cursor-pointer transition select-none">
+            <label
+              className={`flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-xl border cursor-pointer transition select-none ${
+                includeCancelled
+                  ? 'bg-rose-50 border-rose-200 text-rose-800 font-semibold shadow-2xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200/80'
+              }`}
+            >
               <input
                 type="checkbox"
                 checked={includeCancelled}
                 onChange={(e) => setIncludeCancelled(e.target.checked)}
-                className="rounded border-slate-300 text-[#1977cc] focus:ring-[#1977cc]"
+                className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
               />
-              <span>Show cancelled</span>
+              <span>Show cancelled only</span>
             </label>
 
             <button
@@ -499,35 +544,49 @@ export const ScheduleView = () => {
               <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-600" />
               <span>{error}</span>
             </div>
-          ) : todayBookings.length === 0 ? (
+          ) : displayedBookings.length === 0 ? (
             /* Friendly Empty State */
-            <div className="text-center py-12 px-4 max-w-md mx-auto">
-              <div className="w-16 h-16 bg-blue-50 text-[#1977cc] rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100 shadow-sm">
-                <Building className="w-8 h-8" />
+            includeCancelled ? (
+              <div className="text-center py-12 px-4 max-w-md mx-auto">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-rose-100 shadow-sm">
+                  <XCircle className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">No Cancelled Bookings Today</h3>
+                <p className="text-slate-500 text-sm mt-1.5 leading-relaxed">
+                  There are no cancelled room bookings for today ({todayFormatted}). All scheduled bookings are active.
+                </p>
               </div>
-              <h3 className="text-lg font-bold text-slate-900">No Rooms Booked for Today</h3>
-              <p className="text-slate-500 text-sm mt-1.5 leading-relaxed">
-                All meeting rooms and spaces are currently open and free for booking today ({todayFormatted}).
-              </p>
-              <button
-                onClick={handleOpenBookingModal}
-                className="mt-5 inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white font-medium text-sm transition shadow-sm cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Reserve a Room</span>
-              </button>
-            </div>
+            ) : (
+              <div className="text-center py-12 px-4 max-w-md mx-auto">
+                <div className="w-16 h-16 bg-blue-50 text-[#1977cc] rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100 shadow-sm">
+                  <Building className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">No Rooms Booked for Today</h3>
+                <p className="text-slate-500 text-sm mt-1.5 leading-relaxed">
+                  All meeting rooms and spaces are currently open and free for booking today ({todayFormatted}).
+                </p>
+                <button
+                  onClick={handleOpenBookingModal}
+                  className="mt-5 inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white font-medium text-sm transition shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Reserve a Room</span>
+                </button>
+              </div>
+            )
           ) : (
             /* Bookings Grid */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {todayBookings.map((booking) => {
+              {displayedBookings.map((booking) => {
                 const statusInfo = getStatusBadge(booking);
                 const isCreator = user && (booking.created_by === user.id || booking.creator_email === user.email);
 
                 return (
                   <div
                     key={booking.id}
-                    className="border border-slate-200/90 rounded-xl p-5 hover:shadow-md hover:border-slate-300 transition bg-white flex flex-col justify-between group"
+                    onClick={() => setSelectedBookingForDetails(booking)}
+                    className="border border-slate-200/90 rounded-xl p-5 hover:shadow-lg hover:border-[#1977cc]/60 transition bg-white flex flex-col justify-between group cursor-pointer hover:bg-slate-50/40 relative"
+                    title="Click to view full booking details & room amenities"
                   >
                     <div>
                       {/* Top: Room badge & Status pill */}
@@ -597,7 +656,8 @@ export const ScheduleView = () => {
                           isAdminOrSupervisor ? (
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setReviewModalBooking(booking);
                                 setAdminNotes('');
                                 setReviewError(null);
@@ -618,7 +678,10 @@ export const ScheduleView = () => {
                               {(isCreator || isAdminOrSupervisor) && (
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditModal(booking)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenEditModal(booking);
+                                  }}
                                   title="Edit / Reschedule Booking"
                                   className="p-1.5 rounded-lg text-slate-600 hover:text-[#1977cc] hover:bg-blue-50 bg-slate-50 border border-slate-200/80 transition cursor-pointer flex items-center space-x-1"
                                 >
@@ -628,7 +691,10 @@ export const ScheduleView = () => {
                               )}
                               <button
                                 type="button"
-                                onClick={() => handleCancelClick(booking)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCancelClick(booking);
+                                }}
                                 title={
                                   isAdminOrSupervisor
                                     ? 'Cancel booking immediately (Admin/Supervisor)'
@@ -1218,6 +1284,25 @@ export const ScheduleView = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 5. MODAL: BOOKING DETAILS POPUP */}
+      {selectedBookingForDetails && (
+        <BookingDetailsModal
+          booking={selectedBookingForDetails}
+          rooms={rooms}
+          currentUserId={user?.id || user?._id}
+          currentUserEmail={user?.email}
+          isAdminOrSupervisor={isAdminOrSupervisor}
+          onClose={() => setSelectedBookingForDetails(null)}
+          onEdit={(b) => handleOpenEditModal(b)}
+          onCancel={(b) => handleCancelClick(b)}
+          onReview={(b) => {
+            setReviewModalBooking(b);
+            setAdminNotes('');
+            setReviewError(null);
+          }}
+        />
       )}
     </div>
   );

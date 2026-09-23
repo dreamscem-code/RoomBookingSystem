@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { bookingsApi, roomsApi } from '../api';
+import { bookingsApi, roomsApi, getCached } from '../api';
 import AttendeeSelector from '../components/AttendeeSelector';
+import BookingDetailsModal from '../components/BookingDetailsModal';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -35,6 +36,82 @@ import {
   isHKPast,
   parseIsoDate,
 } from '../utils/timezone';
+
+/**
+ * Memoized Calendar Day Cell
+ * Only re-renders if selection, today status, or bookings for this specific day change.
+ */
+const CalendarDayCell = React.memo(function CalendarDayCell({
+  item,
+  dayBookings,
+  isSelected,
+  isToday,
+  onSelectDate,
+}) {
+  const bookingCount = dayBookings.length;
+  const hasPending = dayBookings.some((b) => b.status === 'cancellation_pending');
+  const allCancelled = bookingCount > 0 && dayBookings.every((b) => b.status?.toLowerCase() === 'cancelled');
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectDate(item.date)}
+      className={`min-h-[72px] sm:min-h-[82px] p-1.5 sm:p-2 rounded-xl text-left border transition flex flex-col justify-between cursor-pointer ${
+        isSelected
+          ? 'bg-[#1977cc] text-white border-[#1977cc] shadow-md ring-2 ring-[#1977cc]/20'
+          : isToday
+          ? 'bg-blue-50/60 text-[#1977cc] border-[#1977cc]/30 hover:border-[#1977cc]'
+          : item.isCurrentMonth
+          ? 'bg-white text-slate-800 border-slate-100 hover:border-slate-300 hover:bg-slate-50/70'
+          : 'bg-slate-50/50 text-slate-400 border-transparent hover:bg-slate-100/50'
+      }`}
+    >
+      <div className="flex items-center justify-between w-full">
+        <span
+          className={`text-xs font-bold leading-none ${
+            isSelected
+              ? 'text-white'
+              : isToday
+              ? 'text-[#1977cc]'
+              : item.isCurrentMonth
+              ? 'text-slate-800'
+              : 'text-slate-400'
+          }`}
+        >
+          {item.date.getDate()}
+        </span>
+        {isToday && !isSelected && (
+          <span className="w-1.5 h-1.5 rounded-full bg-[#1977cc]" title="Today" />
+        )}
+      </div>
+
+      {bookingCount > 0 ? (
+        <div className="w-full mt-1">
+          <div
+            className={`text-[10px] sm:text-[11px] font-semibold px-1.5 py-0.5 rounded-md text-center truncate ${
+              isSelected
+                ? 'bg-white/20 text-white'
+                : allCancelled
+                ? 'bg-rose-100 text-rose-700'
+                : hasPending
+                ? 'bg-amber-100 text-amber-800'
+                : dayBookings.every((b) => {
+                    const end = parseIsoDate(b.time_slot?.end);
+                    return end && new Date() > end;
+                  })
+                ? 'bg-slate-100 text-slate-600'
+                : 'bg-blue-100 text-[#1977cc]'
+            }`}
+          >
+            {bookingCount} {allCancelled ? 'cancelled' : bookingCount === 1 ? 'booking' : 'bookings'}
+          </div>
+        </div>
+      ) : (
+        <div className="h-4" />
+      )}
+    </button>
+  );
+});
 
 export const CalendarView = () => {
   const { user } = useAuth();
@@ -103,6 +180,9 @@ export const CalendarView = () => {
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewError, setReviewError] = useState(null);
 
+  // State for Booking Details Popover Modal
+  const [selectedBookingForDetails, setSelectedBookingForDetails] = useState(null);
+
   // Helper: robust date to YYYY-MM-DD in Hong Kong timezone
   const toDateKey = (date) => {
     return getHKDateKey(date);
@@ -120,59 +200,76 @@ export const CalendarView = () => {
 
   // Fetch month bookings
   const fetchMonthBookings = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setIsRefreshing(true);
-    else setIsLoading(true);
+    // Calculate date range for current month plus padding
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+
+    // First day of month at 00:00:00
+    const startOfMonth = new Date(year, month, 1, 0, 0, 0);
+    // Last day of month at 23:59:59
+    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
+
+    // Expand to start of week (Sunday) and end of week (Saturday)
+    const startDate = new Date(startOfMonth);
+    startDate.setDate(startDate.getDate() - startDate.getDay());
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(endOfMonth);
+    endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+    endDate.setHours(23, 59, 59, 999);
+
+    const params = {
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+    };
+    if (selectedRoomId) params.room_id = selectedRoomId;
+    if (myBookingsOnly) params.my_bookings = true;
+
+    // Check RAM cache first for 0ms instant display in the 42 boxes
+    const cacheKey = `bookings_list_${new URLSearchParams(params).toString()}`;
+    const cached = getCached(cacheKey);
+
+    if (cached) {
+      setBookings(cached);
+      setIsLoading(false);
+      if (showRefreshing) setIsRefreshing(true);
+    } else {
+      if (showRefreshing) setIsRefreshing(true);
+      else setIsLoading(true);
+    }
     setError(null);
 
     try {
-      // Calculate date range for current month plus padding
-      const year = currentMonth.getFullYear();
-      const month = currentMonth.getMonth();
-
-      // First day of month at 00:00:00
-      const startOfMonth = new Date(year, month, 1, 0, 0, 0);
-      // Last day of month at 23:59:59
-      const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59);
-
-      // Expand to start of week (Sunday) and end of week (Saturday)
-      const startDate = new Date(startOfMonth);
-      startDate.setDate(startDate.getDate() - startDate.getDay());
-      startDate.setHours(0, 0, 0, 0);
-
-      const endDate = new Date(endOfMonth);
-      endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
-      endDate.setHours(23, 59, 59, 999);
-
-      const params = {
-        start_date: startDate.toISOString(),
-        end_date: endDate.toISOString(),
-      };
-      if (selectedRoomId) params.room_id = selectedRoomId;
-      if (myBookingsOnly) params.my_bookings = true;
-
-      const data = await bookingsApi.list(params);
-      let list = data || [];
-      if (!includeCancelled) {
-        list = list.filter((b) => b.status?.toLowerCase() !== 'cancelled');
-      }
-      setBookings(list);
+      // Background revalidation / fetch
+      const data = await bookingsApi.list(params, !showRefreshing);
+      setBookings(data || []);
     } catch (err) {
-      console.error('Failed to fetch calendar bookings:', err);
-      setError(err.message || 'Unable to load bookings for this period.');
+      if (!cached) {
+        console.error('Failed to fetch calendar bookings:', err);
+        setError(err.message || 'Unable to load bookings for this period.');
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [currentMonth, selectedRoomId, myBookingsOnly, includeCancelled]);
+  }, [currentMonth, selectedRoomId, myBookingsOnly]);
 
   useEffect(() => {
     fetchMonthBookings();
   }, [fetchMonthBookings]);
 
+  // Filter bookings: when includeCancelled is checked, strictly show ONLY cancelled bookings
+  const displayedBookings = useMemo(() => {
+    if (includeCancelled) {
+      return bookings.filter((b) => b.status?.toLowerCase() === 'cancelled');
+    }
+    return bookings.filter((b) => b.status?.toLowerCase() !== 'cancelled');
+  }, [bookings, includeCancelled]);
+
   // Index bookings by date key "YYYY-MM-DD"
   const bookingsByDate = useMemo(() => {
     const map = {};
-    bookings.forEach((booking) => {
+    displayedBookings.forEach((booking) => {
       const start = parseIsoDate(booking.time_slot?.start);
       if (start) {
         const key = toDateKey(start);
@@ -181,7 +278,7 @@ export const CalendarView = () => {
       }
     });
     return map;
-  }, [bookings]);
+  }, [displayedBookings]);
 
   // Calendar grid construction
   const calendarDays = useMemo(() => {
@@ -230,6 +327,10 @@ export const CalendarView = () => {
     setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
     setSelectedDate(now);
   };
+
+  const handleSelectDate = useCallback((date) => {
+    setSelectedDate(date);
+  }, []);
 
   // Selected date bookings list
   const selectedDateKey = toDateKey(selectedDate);
@@ -597,14 +698,18 @@ export const CalendarView = () => {
           </label>
 
           {/* Show Cancelled Toggle */}
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl border border-slate-200 cursor-pointer transition select-none">
+          <label className={`flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-xl border cursor-pointer transition select-none ${
+            includeCancelled
+              ? 'bg-rose-50 border-rose-200 text-rose-700 font-semibold shadow-xs'
+              : 'text-slate-600 bg-slate-50 hover:bg-slate-100 border-slate-200'
+          }`}>
             <input
               type="checkbox"
               checked={includeCancelled}
               onChange={(e) => setIncludeCancelled(e.target.checked)}
-              className="rounded border-slate-300 text-[#1977cc] focus:ring-[#1977cc]"
+              className="rounded border-slate-300 text-rose-600 focus:ring-rose-500"
             />
-            <span>Show Cancelled</span>
+            <span>Show Cancelled Only</span>
           </label>
         </div>
 
@@ -670,70 +775,17 @@ export const CalendarView = () => {
 
           {/* Calendar Day Cells */}
           <div className="grid grid-cols-7 gap-1">
-            {calendarDays.map((item, idx) => {
+            {calendarDays.map((item) => {
               const dayKey = toDateKey(item.date);
-              const dayBookings = bookingsByDate[dayKey] || [];
-              const bookingCount = dayBookings.length;
-              const hasConfirmed = dayBookings.some((b) => b.status === 'confirmed');
-              const hasPending = dayBookings.some((b) => b.status === 'cancellation_pending');
-              const selected = isSelected(item.date);
-              const current = isToday(item.date);
-
               return (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setSelectedDate(item.date)}
-                  className={`min-h-[72px] sm:min-h-[82px] p-1.5 sm:p-2 rounded-xl text-left border transition flex flex-col justify-between cursor-pointer ${selected
-                      ? 'bg-[#1977cc] text-white border-[#1977cc] shadow-md ring-2 ring-[#1977cc]/20'
-                      : current
-                        ? 'bg-blue-50/60 text-[#1977cc] border-[#1977cc]/30 hover:border-[#1977cc]'
-                        : item.isCurrentMonth
-                          ? 'bg-white text-slate-800 border-slate-100 hover:border-slate-300 hover:bg-slate-50/70'
-                          : 'bg-slate-50/50 text-slate-400 border-transparent hover:bg-slate-100/50'
-                    }`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <span
-                      className={`text-xs font-bold leading-none ${selected
-                          ? 'text-white'
-                          : current
-                            ? 'text-[#1977cc]'
-                            : item.isCurrentMonth
-                              ? 'text-slate-800'
-                              : 'text-slate-400'
-                        }`}
-                    >
-                      {item.date.getDate()}
-                    </span>
-                    {current && !selected && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#1977cc]" title="Today" />
-                    )}
-                  </div>
-
-                  {/* Booking indicator pills / dots */}
-                  {bookingCount > 0 ? (
-                    <div className="w-full mt-1">
-                      <div
-                        className={`text-[10px] sm:text-[11px] font-semibold px-1.5 py-0.5 rounded-md text-center truncate ${selected
-                            ? 'bg-white/20 text-white'
-                            : hasPending
-                              ? 'bg-amber-100 text-amber-800'
-                              : dayBookings.every((b) => {
-                                const end = parseIsoDate(b.time_slot?.end);
-                                return end && new Date() > end;
-                              })
-                                ? 'bg-slate-100 text-slate-600'
-                                : 'bg-blue-100 text-[#1977cc]'
-                          }`}
-                      >
-                        {bookingCount} {bookingCount === 1 ? 'booking' : 'bookings'}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="h-4" />
-                  )}
-                </button>
+                <CalendarDayCell
+                  key={dayKey}
+                  item={item}
+                  dayBookings={bookingsByDate[dayKey] || []}
+                  isSelected={isSelected(item.date)}
+                  isToday={isToday(item.date)}
+                  onSelectDate={handleSelectDate}
+                />
               );
             })}
           </div>
@@ -808,23 +860,27 @@ export const CalendarView = () => {
                 <Inbox className="w-6 h-6" />
               </div>
               <p className="text-sm font-semibold text-slate-700">
-                No Bookings for this Date
+                {includeCancelled ? 'No Cancelled Bookings for this Date' : 'No Bookings for this Date'}
               </p>
               <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                All rooms are currently vacant and available on this day.
+                {includeCancelled
+                  ? 'There are no cancelled reservations recorded for this date.'
+                  : 'All rooms are currently vacant and available on this day.'}
               </p>
-              {selectedDateKey < getHKTodayKey() ? (
-                <div className="mt-2 py-2 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 font-medium inline-block">
-                  Past Date • Reservations cannot be made for past dates
-                </div>
-              ) : (
-                <button
-                  onClick={() => openBookingModalForDate(selectedDate)}
-                  className="mt-2 inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Reserve a Room</span>
-                </button>
+              {!includeCancelled && (
+                selectedDateKey < getHKTodayKey() ? (
+                  <div className="mt-2 py-2 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 font-medium inline-block">
+                    Past Date • Reservations cannot be made for past dates
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => openBookingModalForDate(selectedDate)}
+                    className="mt-2 inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Reserve a Room</span>
+                  </button>
+                )
               )}
             </div>
           ) : (
@@ -836,7 +892,9 @@ export const CalendarView = () => {
                 return (
                   <div
                     key={booking.id}
-                    className={`p-4 rounded-xl border transition ${statusMeta.cardClass}`}
+                    onClick={() => setSelectedBookingForDetails(booking)}
+                    className={`p-4 rounded-xl border transition cursor-pointer hover:shadow-lg hover:border-[#1977cc]/60 hover:bg-slate-50/40 relative ${statusMeta.cardClass}`}
+                    title="Click to view full booking details & room amenities"
                   >
                     {/* Header: Room Name & Status */}
                     <div className="flex items-center justify-between mb-2">
@@ -896,7 +954,8 @@ export const CalendarView = () => {
                           isAdminOrSupervisor ? (
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setReviewModalBooking(booking);
                                 setAdminNotes('');
                                 setReviewError(null);
@@ -916,7 +975,10 @@ export const CalendarView = () => {
                               {(isOwner || isAdminOrSupervisor) && (
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditModal(booking)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenEditModal(booking);
+                                  }}
                                   className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition cursor-pointer flex items-center space-x-1"
                                   title="Edit or Reschedule this booking"
                                 >
@@ -926,7 +988,10 @@ export const CalendarView = () => {
                               )}
                               <button
                                 type="button"
-                                onClick={() => handleCancelClick(booking)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCancelClick(booking);
+                                }}
                                 className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition cursor-pointer flex items-center space-x-1 ${isAdminOrSupervisor
                                     ? 'text-rose-600 hover:bg-rose-50'
                                     : 'text-amber-700 hover:bg-amber-50'
@@ -1479,6 +1544,25 @@ export const CalendarView = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 4. MODAL: BOOKING DETAILS POPUP */}
+      {selectedBookingForDetails && (
+        <BookingDetailsModal
+          booking={selectedBookingForDetails}
+          rooms={rooms}
+          currentUserId={user?.id || user?._id}
+          currentUserEmail={user?.email}
+          isAdminOrSupervisor={isAdminOrSupervisor}
+          onClose={() => setSelectedBookingForDetails(null)}
+          onEdit={(b) => handleOpenEditModal(b)}
+          onCancel={(b) => handleCancelClick(b)}
+          onReview={(b) => {
+            setReviewModalBooking(b);
+            setAdminNotes('');
+            setReviewError(null);
+          }}
+        />
       )}
     </div>
   );

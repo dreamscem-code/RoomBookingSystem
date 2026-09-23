@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Users, UserPlus, X, Search, Check, AlertTriangle, ShieldCheck, User } from 'lucide-react';
 import { usersApi } from '../api';
 
@@ -59,21 +59,22 @@ export default function AttendeeSelector({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  const selectedUserIds = new Set((value || []).map((att) => att.user_id));
-
   // Filter available users (exclude selected and organizer)
-  const availableUsers = users.filter((u) => {
-    const uid = u._id || u.id;
-    if (organizerId && uid === organizerId) return false;
-    if (selectedUserIds.has(uid)) return false;
+  const availableUsers = useMemo(() => {
+    const selectedUserIds = new Set((value || []).map((att) => att.user_id));
+    return users.filter((u) => {
+      const uid = u._id || u.id;
+      if (organizerId && uid === organizerId) return false;
+      if (selectedUserIds.has(uid)) return false;
 
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    const fullName = `${u.profile?.first_name || ''} ${u.profile?.last_name || ''}`.toLowerCase();
-    const email = (u.email || '').toLowerCase();
-    const team = (u.team || '').toLowerCase();
-    return fullName.includes(term) || email.includes(term) || team.includes(term);
-  });
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.toLowerCase();
+      const fullName = `${u.profile?.first_name || ''} ${u.profile?.last_name || ''}`.toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const team = (u.team || '').toLowerCase();
+      return fullName.includes(term) || email.includes(term) || team.includes(term);
+    });
+  }, [users, value, organizerId, searchTerm]);
 
   const handleSelectUser = (user) => {
     const uid = user._id || user.id;
