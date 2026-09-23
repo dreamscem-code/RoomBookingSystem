@@ -19,6 +19,7 @@ import {
   HelpCircle,
   Check,
 } from 'lucide-react';
+import { formatHKDateTime } from '../utils/timezone';
 
 const CATEGORIES = [
   {
@@ -407,13 +408,7 @@ export const ReportIssues = () => {
               const isUpdating = updatingIssueId === issueId;
 
               const createdAtFormatted = issue.created_at
-                ? new Date(issue.created_at).toLocaleString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
+                ? formatHKDateTime(issue.created_at)
                 : 'Recently';
 
               return (

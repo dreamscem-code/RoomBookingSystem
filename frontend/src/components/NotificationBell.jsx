@@ -12,6 +12,7 @@ import {
   Inbox,
   Trash2
 } from 'lucide-react';
+import { parseIsoDate } from '../utils/timezone';
 
 export const NotificationBell = () => {
   const [notifications, setNotifications] = useState([]);
@@ -28,16 +29,23 @@ export const NotificationBell = () => {
     }
   }, []);
 
-  // Initial load and periodic refresh
+  // Initial load, periodic refresh, and real-time event listener
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000); // 30s polling
+    const interval = setInterval(fetchNotifications, 15000); // 15s polling
     const handleFocus = () => fetchNotifications();
+    const handleBookingUpdate = () => {
+      fetchNotifications();
+      setTimeout(fetchNotifications, 1200);
+    };
+
     window.addEventListener('focus', handleFocus);
+    window.addEventListener('booking-updated', handleBookingUpdate);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('booking-updated', handleBookingUpdate);
     };
   }, [fetchNotifications]);
 
@@ -123,17 +131,21 @@ export const NotificationBell = () => {
     }
   };
 
-  // Format relative time
+  // Format relative time (with robust UTC parsing)
   const formatTimeAgo = (dateStr) => {
     if (!dateStr) return 'Just now';
-    const date = new Date(dateStr);
+    const date = parseIsoDate(dateStr);
+    if (!date || isNaN(date.getTime())) return 'Just now';
     const now = new Date();
     const diffMs = now - date;
+
+    // If within 1 minute or slight clock skew, show 'Just now'
+    if (diffMs < 60000) return 'Just now';
+
     const diffMins = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays === 1) return 'Yesterday';
@@ -156,7 +168,12 @@ export const NotificationBell = () => {
       {/* Bell Trigger Button */}
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen) {
+            fetchNotifications();
+          }
+          setIsOpen(!isOpen);
+        }}
         className="relative p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors focus:outline-none cursor-pointer"
         aria-label="Notifications"
         title="Notifications"

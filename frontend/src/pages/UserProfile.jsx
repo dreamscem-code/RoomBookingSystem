@@ -18,6 +18,7 @@ import {
   Save,
   Calendar
 } from 'lucide-react';
+import { formatHKShortDate } from '../utils/timezone';
 
 export const UserProfile = () => {
   const { user, refreshUser } = useAuth();
@@ -162,7 +163,7 @@ export const UserProfile = () => {
                 {user?.created_at && (
                   <span className="flex items-center text-slate-400">
                     <Calendar className="w-3.5 h-3.5 mr-1" />
-                    Joined {new Date(user.created_at).toLocaleDateString()}
+                    Joined {formatHKShortDate(user.created_at)}
                   </span>
                 )}
               </div>

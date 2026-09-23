@@ -15,6 +15,16 @@ import {
   XCircle,
   Sparkles,
 } from 'lucide-react';
+import {
+  createHKIsoString,
+  formatHKTimeRange,
+  formatHKDate,
+  getHKTodayKey,
+  getHKCurrentTimeString,
+  getHKDefaultStartEndTimes,
+  isHKPast,
+  parseIsoDate,
+} from '../utils/timezone';
 
 export const ScheduleView = () => {
   const { user } = useAuth();
@@ -34,16 +44,32 @@ export const ScheduleView = () => {
   // State for booking modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [rooms, setRooms] = useState([]);
-  const [formData, setFormData] = useState({
-    roomId: '',
-    title: '',
-    date: new Date().toISOString().split('T')[0],
-    startTime: '10:00',
-    endTime: '11:00',
+  const [formData, setFormData] = useState(() => {
+    const upcoming = getHKDefaultStartEndTimes();
+    return {
+      roomId: '',
+      title: '',
+      date: getHKTodayKey(),
+      startTime: upcoming.startTime,
+      endTime: upcoming.endTime,
+    };
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [bookingError, setBookingError] = useState(null);
   const [bookingSuccess, setBookingSuccess] = useState(null);
+
+  const handleOpenBookingModal = () => {
+    const upcoming = getHKDefaultStartEndTimes();
+    setFormData((prev) => ({
+      ...prev,
+      date: getHKTodayKey(),
+      startTime: upcoming.startTime,
+      endTime: upcoming.endTime,
+    }));
+    setBookingError(null);
+    setBookingSuccess(null);
+    setIsModalOpen(true);
+  };
 
   // State for cancellation request modal (Staff / Non-Admin)
   const [cancelModalBooking, setCancelModalBooking] = useState(null);
@@ -105,13 +131,7 @@ export const ScheduleView = () => {
 
   // Formatters
   const formatTimeRange = (startStr, endStr) => {
-    if (!startStr || !endStr) return '';
-    const s = parseIsoDate(startStr);
-    const e = parseIsoDate(endStr);
-    if (!s || !e) return '';
-    const sTime = s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const eTime = e.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return `${sTime} – ${eTime}`;
+    return formatHKTimeRange(startStr, endStr);
   };
 
   const getStatusBadge = (booking) => {
@@ -167,11 +187,17 @@ export const ScheduleView = () => {
 
     try {
       setIsSubmitting(true);
-      const startDateTime = new Date(`${formData.date}T${formData.startTime}:00`);
-      const endDateTime = new Date(`${formData.date}T${formData.endTime}:00`);
+      const startIso = createHKIsoString(formData.date, formData.startTime);
+      const endIso = createHKIsoString(formData.date, formData.endTime);
 
-      if (startDateTime >= endDateTime) {
+      if (new Date(startIso) >= new Date(endIso)) {
         setBookingError('End time must be strictly after start time.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (isHKPast(formData.date, formData.startTime)) {
+        setBookingError('Please select an upcoming time slot.');
         setIsSubmitting(false);
         return;
       }
@@ -180,14 +206,15 @@ export const ScheduleView = () => {
         room_id: formData.roomId,
         title: formData.title.trim(),
         time_slot: {
-          start: startDateTime.toISOString(),
-          end: endDateTime.toISOString(),
+          start: startIso,
+          end: endIso,
         },
         attendees: [],
       });
 
       setBookingSuccess('Room booked successfully!');
       setFormData((prev) => ({ ...prev, title: '' }));
+      window.dispatchEvent(new CustomEvent('booking-updated'));
       setTimeout(() => {
         setIsModalOpen(false);
         setBookingSuccess(null);
@@ -212,7 +239,10 @@ export const ScheduleView = () => {
         const bookingId = booking.id || booking._id;
         bookingsApi
           .cancel(bookingId)
-          .then(() => fetchTodayBookings(true))
+          .then(() => {
+            window.dispatchEvent(new CustomEvent('booking-updated'));
+            fetchTodayBookings(true);
+          })
           .catch((err) => alert(`Failed to cancel: ${err.message}`));
       }
     } else {
@@ -237,6 +267,7 @@ export const ScheduleView = () => {
       await bookingsApi.requestCancel(bookingId, cancelReason.trim());
       setCancelModalBooking(null);
       setCancelReason('');
+      window.dispatchEvent(new CustomEvent('booking-updated'));
       fetchTodayBookings(true);
       alert('Cancellation request submitted successfully! Administrators and supervisors have been notified by email to review.');
     } catch (err) {
@@ -256,6 +287,7 @@ export const ScheduleView = () => {
       await bookingsApi.reviewCancel(bookingId, action, adminNotes.trim() || undefined);
       setReviewModalBooking(null);
       setAdminNotes('');
+      window.dispatchEvent(new CustomEvent('booking-updated'));
       fetchTodayBookings(true);
       alert(
         `Cancellation request ${
@@ -271,17 +303,12 @@ export const ScheduleView = () => {
     }
   };
 
-  const todayFormatted = new Date().toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const todayFormatted = formatHKDate(new Date());
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* 1. Top Welcome Banner */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-sm">
         <div>
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#1977cc]/10 text-[#1977cc] text-xs font-semibold mb-3">
             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -293,16 +320,6 @@ export const ScheduleView = () => {
           <p className="text-slate-500 text-sm mt-1">
             Department: <span className="text-slate-800 capitalize font-medium">{user?.team || 'General'}</span> • Role: <span className="text-[#1977cc] font-medium capitalize">{user?.roles?.map((r) => r.role_name).join(', ') || 'Staff'}</span> • Type: <span className="text-emerald-700 font-medium capitalize">{user?.user_type || 'Full-Time'}</span>
           </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="px-5 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white font-medium text-sm shadow-sm transition flex items-center space-x-2 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Book a Room</span>
-          </button>
         </div>
       </div>
 
@@ -352,8 +369,8 @@ export const ScheduleView = () => {
             </button>
 
             <button
-              onClick={() => setIsModalOpen(true)}
-              className="px-3.5 py-2 text-xs font-medium rounded-xl bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              onClick={handleOpenBookingModal}
+              className="px-4 py-2 text-xs font-semibold rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Reserve Room</span>
@@ -392,11 +409,11 @@ export const ScheduleView = () => {
                 All meeting rooms and spaces are currently open and free for booking today ({todayFormatted}).
               </p>
               <button
-                onClick={() => setIsModalOpen(true)}
+                onClick={handleOpenBookingModal}
                 className="mt-5 inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white font-medium text-sm transition shadow-sm cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>Book a Room for Today</span>
+                <span>Reserve a Room</span>
               </button>
             </div>
           ) : (
@@ -528,7 +545,7 @@ export const ScheduleView = () => {
                 <Calendar className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-slate-900">Book a Room</h3>
+                <h3 className="text-xl font-bold text-slate-900">Reserve a Room</h3>
                 <p className="text-slate-500 text-xs mt-0.5">Reserve a space with real-time schedule conflict prevention</p>
               </div>
             </div>
@@ -590,6 +607,7 @@ export const ScheduleView = () => {
                 </label>
                 <input
                   type="date"
+                  min={getHKTodayKey()}
                   value={formData.date}
                   onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                   required
@@ -597,57 +615,93 @@ export const ScheduleView = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    Start Time
-                  </label>
-                  <input
-                    type="time"
-                    value={formData.startTime}
-                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#1977cc]/20 focus:border-[#1977cc] transition"
-                  />
-                </div>
+              {(() => {
+                const isTodaySelected = formData.date === getHKTodayKey();
+                const isPastSelected = isHKPast(formData.date, formData.startTime);
+                const isInvalidTimeOrder =
+                  Boolean(formData.startTime && formData.endTime && formData.startTime >= formData.endTime);
+                const hkCurrentTime = getHKCurrentTimeString();
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                    End Time
-                  </label>
-                  <input
-                    type="time"
-                    value={formData.endTime}
-                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                    required
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#1977cc]/20 focus:border-[#1977cc] transition"
-                  />
-                </div>
-              </div>
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          Start Time
+                        </label>
+                        <input
+                          type="time"
+                          min={isTodaySelected ? hkCurrentTime : undefined}
+                          value={formData.startTime}
+                          onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                          required
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${
+                            isPastSelected
+                              ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
+                              : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
+                          }`}
+                        />
+                      </div>
 
-              <div className="pt-4 flex items-center justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white text-sm font-semibold shadow-sm transition disabled:opacity-50 cursor-pointer flex items-center space-x-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Checking & Booking...</span>
-                    </>
-                  ) : (
-                    <span>Confirm Booking</span>
-                  )}
-                </button>
-              </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                          End Time
+                        </label>
+                        <input
+                          type="time"
+                          min={formData.startTime || (isTodaySelected ? hkCurrentTime : undefined)}
+                          value={formData.endTime}
+                          onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                          required
+                          className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 transition ${
+                            isInvalidTimeOrder
+                              ? 'border-rose-300 bg-rose-50/40 text-rose-900 focus:ring-rose-200 focus:border-rose-400'
+                              : 'border-slate-300 focus:ring-[#1977cc]/20 focus:border-[#1977cc]'
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    {isPastSelected && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-xl flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                        <span>Please select an upcoming time slot.</span>
+                      </div>
+                    )}
+
+                    {isInvalidTimeOrder && !isPastSelected && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+                        <span>End time must be strictly after start time.</span>
+                      </div>
+                    )}
+
+                    <div className="pt-4 flex items-center justify-end space-x-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsModalOpen(false)}
+                        className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || isPastSelected || isInvalidTimeOrder}
+                        className="px-5 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white text-sm font-semibold shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center space-x-2"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Checking & Booking...</span>
+                          </>
+                        ) : (
+                          <span>Confirm Booking</span>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </form>
           </div>
         </div>

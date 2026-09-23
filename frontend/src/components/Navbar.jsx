@@ -31,6 +31,7 @@ export const Navbar = () => {
   const isAdmin = user?.roles?.some((r) => r.role_name?.toLowerCase() === 'admin');
 
   const isActive = (path) => {
+
     if (path === '/' && location.pathname === '/') return true;
     if (path !== '/' && location.pathname.startsWith(path)) return true;
     return false;
@@ -59,8 +60,8 @@ export const Navbar = () => {
                 <Link
                   to="/"
                   className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
                     }`}
                 >
                   <Home className={`w-4 h-4 ${isActive('/') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -71,8 +72,8 @@ export const Navbar = () => {
                 <Link
                   to="/calendar"
                   className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/calendar')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
                     }`}
                 >
                   <CalendarDays className={`w-4 h-4 ${isActive('/calendar') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -83,8 +84,8 @@ export const Navbar = () => {
                 <Link
                   to="/issues"
                   className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/issues')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
                     }`}
                 >
                   <AlertTriangle className={`w-4 h-4 ${isActive('/issues') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -97,8 +98,8 @@ export const Navbar = () => {
                     <Link
                       to="/rooms"
                       className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/rooms')
-                          ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                          : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
+                        ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                        : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
                         }`}
                     >
                       <Building className={`w-4 h-4 ${isActive('/rooms') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -108,8 +109,8 @@ export const Navbar = () => {
                     <Link
                       to="/roles"
                       className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-sm font-medium transition ${isActive('/roles')
-                          ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                          : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
+                        ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                        : 'text-slate-600 hover:text-[#1977cc] hover:bg-slate-100/80'
                         }`}
                     >
                       <ShieldCheck className={`w-4 h-4 ${isActive('/roles') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -129,8 +130,8 @@ export const Navbar = () => {
                     to="/profile"
                     title="Profile & Settings"
                     className={`flex items-center space-x-2.5 p-1.5 rounded-xl transition group ${isActive('/profile')
-                        ? 'bg-[#1977cc]/10 ring-1 ring-[#1977cc]/30'
-                        : 'hover:bg-slate-100/80'
+                      ? 'bg-[#1977cc]/10 ring-1 ring-[#1977cc]/30'
+                      : 'hover:bg-slate-100/80'
                       }`}
                   >
                     <div className="w-8 h-8 rounded-full bg-[#1977cc] flex items-center justify-center text-white text-xs font-semibold uppercase shadow-xs group-hover:scale-105 transition-transform">
@@ -227,8 +228,8 @@ export const Navbar = () => {
                   to="/"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100'
                     }`}
                 >
                   <Home className={`w-4 h-4 ${isActive('/') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -239,8 +240,8 @@ export const Navbar = () => {
                   to="/calendar"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/calendar')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100'
                     }`}
                 >
                   <CalendarDays className={`w-4 h-4 ${isActive('/calendar') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -251,8 +252,8 @@ export const Navbar = () => {
                   to="/profile"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/profile')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100'
                     }`}
                 >
                   <UserIcon className={`w-4 h-4 ${isActive('/profile') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -263,8 +264,8 @@ export const Navbar = () => {
                   to="/issues"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/issues')
-                      ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                      : 'text-slate-700 hover:bg-slate-100'
+                    ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100'
                     }`}
                 >
                   <AlertTriangle className={`w-4 h-4 ${isActive('/issues') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -278,8 +279,8 @@ export const Navbar = () => {
                       to="/rooms"
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/rooms')
-                          ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                          : 'text-slate-700 hover:bg-slate-100'
+                        ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                        : 'text-slate-700 hover:bg-slate-100'
                         }`}
                     >
                       <Building className={`w-4 h-4 ${isActive('/rooms') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
@@ -290,8 +291,8 @@ export const Navbar = () => {
                       to="/roles"
                       onClick={() => setMobileMenuOpen(false)}
                       className={`flex items-center space-x-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium transition ${isActive('/roles')
-                          ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
-                          : 'text-slate-700 hover:bg-slate-100'
+                        ? 'bg-[#1977cc]/10 text-[#1977cc] font-semibold'
+                        : 'text-slate-700 hover:bg-slate-100'
                         }`}
                     >
                       <ShieldCheck className={`w-4 h-4 ${isActive('/roles') ? 'text-[#1977cc]' : 'text-slate-400'}`} />
