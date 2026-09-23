@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { bookingsApi, roomsApi } from '../api';
 import {
@@ -17,7 +16,6 @@ import {
   X,
   XCircle,
   Filter,
-  ArrowRight,
   CalendarDays,
   Sparkles,
   Inbox
@@ -450,8 +448,8 @@ export const CalendarView = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      {/* Top Header Banner */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Page Header */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-8 shadow-sm">
         <div>
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-[#1977cc]/10 text-[#1977cc] text-xs font-semibold mb-3">
             <CalendarDays className="w-3.5 h-3.5" />
@@ -463,23 +461,6 @@ export const CalendarView = () => {
           <p className="text-slate-500 text-sm mt-1">
             Browse schedule by month and date, view room occupation, and reserve available slots.
           </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Link
-            to="/"
-            className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-medium text-sm transition flex items-center space-x-2"
-          >
-            <span>Today's Schedule</span>
-            <ArrowRight className="w-4 h-4 text-slate-400" />
-          </Link>
-          <button
-            onClick={() => openBookingModalForDate(selectedDate)}
-            className="px-5 py-2.5 rounded-xl bg-[#1977cc] hover:bg-[#1565b0] text-white font-medium text-sm shadow-sm transition flex items-center space-x-2 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Book on Selected Date</span>
-          </button>
         </div>
       </div>
 
